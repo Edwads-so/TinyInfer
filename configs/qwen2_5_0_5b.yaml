@@ -1,0 +1,5 @@
+model_id: Qwen/Qwen2.5-0.5B
+dtype: bfloat16
+device: cuda
+max_sequence_length: 4096
+kv_block_size: 16
