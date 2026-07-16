@@ -9,8 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tinyinfer.environment import main  # noqa: E402
+
+def run() -> int:
+    """Load TinyInfer after making the source checkout importable."""
+    from tinyinfer.environment import main
+
+    return main()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
