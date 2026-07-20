@@ -19,6 +19,14 @@ dev = [
   "pytest-cov>=6,<7",
   "ruff>=0.9,<1",
 ]
+inference = [
+    "safetensors>=0.8.0",
+    "torch>=2.13.0",
+    "transformers>=5.14.1",
+]
+kernels = [
+    "triton>=3.7.1",
+]
 
 [tool.setuptools.packages.find]
 include = ["tinyinfer*"]

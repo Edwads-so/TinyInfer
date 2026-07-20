@@ -3,7 +3,7 @@
 > 文档版本：v1.0
 > 制定日期：2026-07-20
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：待执行
+> 状态：R3 GPU 依赖安装完成，进入 R4 文档阶段
 
 ## 1. 目标与工作量判断
 
@@ -718,13 +718,13 @@ Document Phase 1 results
 
 ### 环境 G0.5
 
-- [ ] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
-- [ ] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
-- [ ] Python 3.11 项目环境可从 lock file 重建。
-- [ ] PyTorch CUDA、BF16、Transformers、Safetensors 导入通过。
-- [ ] 官方 Linux Triton vector-add correctness 通过。
-- [ ] 环境报告不包含秘密信息。
-- [ ] 现有单元测试、Ruff、format 和 mypy 通过。
+- [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
+- [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
+- [x] Python 3.11 项目环境可从 lock file 重建。
+- [x] PyTorch CUDA、BF16、Transformers、Safetensors 导入通过。
+- [x] 官方 Linux Triton vector-add correctness 通过。
+- [x] 环境报告不包含秘密信息。
+- [x] 现有单元测试、Ruff、format 和 mypy 通过。
 
 ### Runtime G1
 
