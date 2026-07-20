@@ -60,7 +60,9 @@ python -m mypy
 3. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
 4. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
 
-See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals.
+See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
+[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers WSL2 environment readiness, the Hugging
+Face reference runtime, correctness gates, and profiling outputs.
 
 ## Correctness Policy
 
