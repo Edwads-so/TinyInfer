@@ -1,8 +1,8 @@
 # TinyInfer Phase 1 工作流程
 
-> 文档版本：v1.0  
-> 制定日期：2026-07-20  
-> 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime  
+> 文档版本：v1.0
+> 制定日期：2026-07-20
+> 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
 > 状态：待执行
 
 ## 1. 目标与工作量判断
