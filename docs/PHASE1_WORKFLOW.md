@@ -740,7 +740,7 @@ Document Phase 1 results
 
 ## 18. G0.5 当前决策
 
-以下命令已在 `tested_revision` `05b9160` 的原生 WSL worktree 中通过。由于 R1 网络不稳定且尚未推送标签，G0.5 状态仍为 `in progress`：
+以下命令已在 `tested_revision` `05b9160` 的原生 WSL worktree 中通过。R1 网络访问与发布 Gate 也已取得新鲜成功证据，G0.5 状态为 `complete`：
 
 ```bash
 # 完整 G0.5 验证（在 WSL2 环境中）
@@ -753,7 +753,7 @@ python scripts/check_gpu_smoke.py
 python scripts/check_environment.py --json
 ```
 
-只有剩余的网络与发布项也产生新鲜 PASS 证据后，才允许进入 R4。具体见本流程第 9-13 节。
+网络与发布项已经产生新鲜 PASS 证据，允许进入 R4。具体证据见本流程第 9-13 节与 `docs/G0_5_REPORT.md`。
 
 ## 19. G1 完成后的下一决策
 
@@ -769,7 +769,7 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
 
 ## 20. 本阶段交付物
 
-### G0.5 本地已验收交付物（待发布）
+### G0.5 已验收并发布的交付物
 
 - 本流程文档。
 - WSL2/Linux 环境 lock file（`uv.lock`）。
@@ -780,7 +780,7 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
 - G0.5 阶段报告（`docs/G0_5_REPORT.md`）。
 - 工作流编写标准与模板（`docs/WORKFLOW_AUTHORING_STANDARD.md`、
   `docs/templates/WORKFLOW_TEMPLATE.md`）。
-- 验收后创建的 `v0.1.0-g0.5` 标签（当前不存在）。
+- 验收后创建并发布的 `v0.1.0-g0.5` 标签。
 
 ### G1 后续交付物（待 R4-R7 实现）
 

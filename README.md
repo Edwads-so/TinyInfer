@@ -6,10 +6,10 @@ efficiency.
 
 ## Status
 
-**G0.5 Linux/GPU Environment Baseline** is in progress. Native WSL acceptance passed at
-tested revision `05b9160`, including two GPU smoke runs and the full verifier. Publication is
-still blocked by unstable GitHub/proxy access, so R4 remains locked until the release Gate is
-finished. The repository currently provides:
+**G0.5 Linux/GPU Environment Baseline** is complete. Native WSL acceptance passed at
+tested revision `05b9160`, including two GPU smoke runs and the full verifier. The release is
+published from the documentation-only release revision identified by tag `v0.1.0-g0.5`.
+The repository currently provides:
 
 - A reproducible WSL2 Ubuntu-22.04 environment with Python 3.11, PyTorch CUDA,
   Transformers, and Triton.

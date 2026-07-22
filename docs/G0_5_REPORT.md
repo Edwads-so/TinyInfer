@@ -3,8 +3,8 @@
 > 生成日期：2026-07-22
 > candidate_revision：4d189af（审计失败的旧候选）
 > tested_revision：05b9160dd1337ddf54727c66c3223e1b0cd0293c
-> release_revision：尚未产生
-> 状态：in progress — 原生 WSL 本地 Gate 已通过，网络与发布 Gate 尚未完成
+> release_revision：由标签 `v0.1.0-g0.5` 唯一解析
+> 状态：complete — 原生 WSL、网络与发布 Gate 均已通过
 
 ---
 
@@ -131,10 +131,10 @@ G0.5 目标：在 WSL2 Ubuntu-22.04 中建立可复现的 Linux、Python、CUDA 
 - [x] 环境报告不包含秘密信息
 - [x] 35 项单元测试、Ruff、14 文件 format check 和 9 源文件 mypy 通过
 - [x] 工作流编写标准与模板已固化
-- [ ] R1 网络和私有仓库访问稳定
-- [ ] release revision、远端 main 与 `v0.1.0-g0.5` 标签已发布
+- [x] R1 网络和私有仓库访问稳定（GitHub、PyPI、Hugging Face 均已取得新鲜成功证据）
+- [x] release revision、远端 main 与 `v0.1.0-g0.5` 标签已发布
 
-**本地计算与工程 Gate 已通过；G0.5 发布状态仍为 in progress。**
+**本地计算、工程、网络与发布 Gate 均已通过；G0.5 状态为 complete。**
 
 ---
 
