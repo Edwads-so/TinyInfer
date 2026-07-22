@@ -6,16 +6,18 @@ efficiency.
 
 ## Status
 
-**G0.5 Linux/GPU Environment Baseline** is verified. The repository provides:
+**G0.5 Linux/GPU Environment Baseline** is in progress. The Linux/GPU environment exists,
+and candidate smoke/verification scripts are under repair, but native WSL acceptance has not
+passed yet. Do not start R4 until the G0.5 gate is verified. The repository currently provides:
 
 - A reproducible WSL2 Ubuntu-22.04 environment with Python 3.11, PyTorch CUDA,
   Transformers, and Triton.
-- A standalone GPU correctness smoke test (BF16 matmul + Triton vector-add).
-- A unified G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
+- Candidate GPU correctness smoke test code (BF16 matmul + Triton vector-add).
+- A candidate G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
 - Engineering scaffold: packaging, validated configuration, environment diagnostics,
   tests, linting, typing, CI, and documentation.
 
-Next milestone: R4 Reference Runtime data model. Model inference, continuous batching,
+Next milestone after G0.5 acceptance: R4 Reference Runtime data model. Model inference, continuous batching,
 paged KV cache, and Triton kernels are planned and are not implemented yet.
 
 ## Architecture Boundary
@@ -75,15 +77,16 @@ The G0.5 verifier does not download models, install dependencies, or modify Git 
 ## Reduced Roadmap
 
 **Completed:**
-1. Engineering foundation and G0.5 Linux/GPU environment baseline.
+1. Engineering foundation.
 
-**Planned:**
-2. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
-3. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
-4. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
+**In progress / planned:**
+2. Verify the G0.5 Linux/GPU environment baseline in a native WSL worktree.
+3. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
+4. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
+5. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
 
 See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
-[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers G0.5 environment baseline (completed),
+[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers the G0.5 environment baseline (in progress),
 the Hugging Face reference runtime, correctness gates, and profiling outputs.
 
 For agent-executable workflow standards, see

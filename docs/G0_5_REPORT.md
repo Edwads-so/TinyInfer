@@ -1,9 +1,10 @@
 # TinyInfer G0.5 阶段报告
 
 > 生成日期：2026-07-22
-> tested_revision：986f762
-> release_revision：（在本文档提交后确定）
-> 状态：G0.5 Linux/GPU Environment Baseline 验收通过
+> candidate_revision：4d189af
+> tested_revision：尚未产生
+> release_revision：尚未产生
+> 状态：in progress — 候选代码尚未通过原生 WSL 验收
 
 ---
 
@@ -15,6 +16,25 @@ G0.5 目标：在 WSL2 Ubuntu-22.04 中建立可复现的 Linux、Python、CUDA 
 **G0.5 是环境基线门，不是完整 Phase 1。完整 Phase 1 以 G1 为退出门。**
 
 下一步进入 R4 Reference Runtime 数据模型开发。
+
+在 G0.5 Gate 通过前，上述“下一步”保持锁定，不允许开始 R4。
+
+### 2026-07-22 审计结果
+
+候选代码已存在于 Windows 隔离 worktree，但尚未在 WSL 原生 checkout 上运行正式 GPU smoke
+和完整 verifier。重新执行 CPU 质量门得到：
+
+| 检查 | 新鲜结果 |
+|---|---|
+| pytest | 23 passed, 8 failed |
+| Ruff check | 7 errors |
+| Ruff format | 4 files would be reformatted |
+| Mypy | 7 errors |
+| Native WSL GPU smoke | not run |
+| Full G0.5 verifier | not run |
+
+因此此前写入本报告的 PASS 与“全部通过”声明无效。只有后续在修复后的提交上重新运行验收，
+才能填入 `tested_revision`。
 
 ### Git Revision 说明
 
@@ -67,27 +87,27 @@ G0.5 目标：在 WSL2 Ubuntu-22.04 中建立可复现的 Linux、Python、CUDA 
 | GPU | NVIDIA GeForce RTX 4080 SUPER |
 | BF16 支持 | ✅ yes |
 
-### 3.2 GPU Correctness Smoke Test
+### 3.2 GPU Correctness Smoke Test（待验收）
 
 由独立脚本 `scripts/check_gpu_smoke.py` 提供。该脚本在真实 GPU 上执行计算并验证结果，
 与能力检查职责完全分离。
 
 | 测试 | 结果 |
 |------|------|
-| CUDA BF16 matmul (1024×1024) | ✅ PASS |
-| Triton vector-add (1) | ✅ PASS |
-| Triton vector-add (257) | ✅ PASS |
-| Triton vector-add (4096) | ✅ PASS |
-| Triton vector-add (65537) | ✅ PASS |
+| CUDA BF16 matmul (1024×1024) | NOT VERIFIED |
+| Triton vector-add (1) | NOT VERIFIED |
+| Triton vector-add (257) | NOT VERIFIED |
+| Triton vector-add (4096) | NOT VERIFIED |
+| Triton vector-add (65537) | NOT VERIFIED |
 
-### 3.3 工程质量检查
+### 3.3 工程质量检查（当前失败）
 
 | 检查 | 结果 |
 |------|------|
-| Unit tests | ✅ 全部通过 |
-| Ruff check | ✅ All checks passed |
-| Ruff format | ✅ 格式正确 |
-| Mypy type check | ✅ No issues in 5 source files |
+| Unit tests | ❌ 23 passed, 8 failed |
+| Ruff check | ❌ 7 errors |
+| Ruff format | ❌ 4 files require formatting |
+| Mypy type check | ❌ 7 errors |
 
 ---
 
@@ -95,15 +115,15 @@ G0.5 目标：在 WSL2 Ubuntu-22.04 中建立可复现的 Linux、Python、CUDA 
 
 - [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录
 - [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`
-- [x] Python 3.11 项目环境可从 lock file 重建
+- [ ] Python 3.11 项目环境已在全新原生 WSL worktree 中从 lock file 重建
 - [x] PyTorch CUDA、BF16、Transformers、Safetensors 导入通过
-- [x] 独立 GPU smoke test（`scripts/check_gpu_smoke.py`）可重复执行并返回明确退出码
-- [x] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查
+- [ ] 独立 GPU smoke test（`scripts/check_gpu_smoke.py`）可重复执行并返回明确退出码
+- [ ] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查
 - [x] 环境报告不包含秘密信息
-- [x] 现有单元测试、Ruff、format 和 mypy 通过
+- [ ] 现有单元测试、Ruff、format 和 mypy 通过
 - [x] 工作流编写标准与模板已固化
 
-**G0.5 全部通过**
+**G0.5 尚未通过；状态为 in progress。**
 
 ---
 

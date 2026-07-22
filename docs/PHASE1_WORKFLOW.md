@@ -4,13 +4,13 @@
 > 制定日期：2026-07-20
 > 最后修订：2026-07-22
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：G0.5 环境基线验收通过，R4 待开始
+> 状态：G0.5 环境基线修复与原生 WSL 验收进行中，R4 禁止开始
 
 ## 1. 目标与工作量判断
 
 本阶段属于中等规模工程，不是大型推理系统开发。工作被严格限制为两部分：
 
-1. **G0.5 Linux/GPU Environment Baseline**（已完成）：在现有 WSL2 Ubuntu 中建立可复现的
+1. **G0.5 Linux/GPU Environment Baseline**（进行中）：在现有 WSL2 Ubuntu 中建立可复现的
    Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
 2. **R4-R7 + G1 Reference Runtime**（待开始）：基于 Hugging Face Qwen2.5-0.5B 实现单请求、
    greedy、显式 prefill/decode 的 reference runtime。
@@ -381,7 +381,7 @@ PY
 
 ### 8.6 环境快照
 
-G0.5 已提供独立的 GPU smoke test 脚本（`scripts/check_gpu_smoke.py`）和环境检查器
+G0.5 候选分支已提供 GPU smoke test 脚本（`scripts/check_gpu_smoke.py`）和环境检查器
 （`scripts/check_environment.py`）。两者职责分离：
 
 - `scripts/check_environment.py`：轻量级能力检查，报告包、CUDA、GPU 和 BF16 状态。
@@ -711,17 +711,17 @@ Document Phase 1 results
 
 ## 17. Phase 1 验收清单
 
-### G0.5 Linux/GPU Environment Baseline（已完成）
+### G0.5 Linux/GPU Environment Baseline（进行中）
 
 - [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
 - [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
-- [x] Python 3.11 项目环境可从 lock file 重建。
+- [ ] Python 3.11 项目环境已在全新原生 WSL worktree 中从 lock file 重建。
 - [x] PyTorch CUDA、BF16、Transformers、Safetensors 导入通过。
-- [x] 官方 Linux Triton vector-add correctness 通过。
+- [ ] 候选脚本在原生 WSL 中连续两次通过 Triton vector-add correctness。
 - [x] 环境报告不包含秘密信息。
-- [x] 现有单元测试、Ruff、format 和 mypy 通过。
-- [x] 独立 GPU smoke test 可重复执行并返回明确退出码。
-- [x] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查。
+- [ ] 候选分支的单元测试、Ruff、format 和 mypy 通过。
+- [ ] 独立 GPU smoke test 可重复执行并返回明确退出码。
+- [ ] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查。
 - [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
 
 ### Runtime G1（待开始）
@@ -737,9 +737,9 @@ Document Phase 1 results
 - [ ] JSONL 包含环境、model revision 和 Git revision。
 - [ ] README 能用一组命令复现 correctness 和 reference benchmark。
 
-## 18. G0.5 已完成决策
+## 18. G0.5 当前决策
 
-G0.5 环境基线已验收通过。当前可执行命令：
+G0.5 尚未验收通过。以下为候选命令，必须在修复质量门并转移到原生 WSL worktree 后执行：
 
 ```bash
 # 完整 G0.5 验证（在 WSL2 环境中）
@@ -752,7 +752,7 @@ python scripts/check_gpu_smoke.py
 python scripts/check_environment.py --json
 ```
 
-下一步进入 R4：Reference Runtime 数据模型开发。具体见本流程第 9-13 节。
+只有上述命令和本节验收清单全部产生新鲜 PASS 证据后，才允许进入 R4。具体见本流程第 9-13 节。
 
 ## 19. G1 完成后的下一决策
 
@@ -768,7 +768,7 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
 
 ## 20. 本阶段交付物
 
-### G0.5 交付物（已完成）
+### G0.5 候选交付物（待验收）
 
 - 本流程文档。
 - WSL2/Linux 环境 lock file（`uv.lock`）。
@@ -779,7 +779,7 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
 - G0.5 阶段报告（`docs/G0_5_REPORT.md`）。
 - 工作流编写标准与模板（`docs/WORKFLOW_AUTHORING_STANDARD.md`、
   `docs/templates/WORKFLOW_TEMPLATE.md`）。
-- `v0.1.0-g0.5` 标签。
+- 验收后创建的 `v0.1.0-g0.5` 标签（当前不存在）。
 
 ### G1 后续交付物（待 R4-R7 实现）
 
