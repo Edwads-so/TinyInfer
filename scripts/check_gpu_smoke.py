@@ -16,8 +16,14 @@ Design §6.1 -- ten explicit requirements:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # ---------------------------------------------------------------------------
 # Pure-Python helpers (testable without GPU) -- §6.2
@@ -26,6 +32,11 @@ from dataclasses import dataclass
 FIXED_SIZES: tuple[int, ...] = (1, 257, 4096, 65537)
 
 TRITON_BLOCK_SIZE = 1024
+
+
+def triton_result_name(size: int) -> str:
+    """Return the stable evidence label for one vector-add size."""
+    return f"triton-add-{size}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,59 +107,33 @@ def _check_cuda_matmul() -> SmokeResult:
     return SmokeResult("cuda-matmul")
 
 
-def _triton_vector_add_kernel():
-    """Inline Triton kernel -- avoids import-time dependency."""
-    import triton
-    import triton.language as tl
-
-    @triton.jit
-    def _add_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-        pid = tl.program_id(axis=0)
-        block_start = pid * BLOCK_SIZE
-        offsets = block_start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_elements
-        x = tl.load(x_ptr + offsets, mask=mask)
-        y = tl.load(y_ptr + offsets, mask=mask)
-        tl.store(out_ptr + offsets, x + y, mask=mask)
-
-    return _add_kernel
-
-
-def _check_triton_vector_add() -> SmokeResult:
+def _check_triton_vector_add() -> list[SmokeResult]:
     """Design §6.1 items 5-8."""
     import torch
 
     try:
-        import triton  # noqa: F401
+        from scripts.triton_vector_add import launch_vector_add
     except ImportError as exc:
-        return SmokeResult("triton-import", str(exc))
-
-    try:
-        add_kernel = _triton_vector_add_kernel()
-    except Exception as exc:
-        return SmokeResult("triton-compile", str(exc))
+        return [SmokeResult("triton-import", str(exc))]
 
     device = torch.device("cuda")
+    results: list[SmokeResult] = []
     for n in FIXED_SIZES:
         x = torch.randn(n, device=device, dtype=torch.float32)
         y = torch.randn(n, device=device, dtype=torch.float32)
         out = torch.empty_like(x)
+        name = triton_result_name(n)
 
-        grid = lambda meta: (  # noqa: E731
-            (n + meta["BLOCK_SIZE"] - 1) // meta["BLOCK_SIZE"],
-        )
         try:
-            add_kernel[grid](x, y, out, n, BLOCK_SIZE=TRITON_BLOCK_SIZE)
-        except Exception as exc:
-            return SmokeResult(f"triton-add-{n}", str(exc))
-
-        torch.cuda.synchronize()
-        try:
+            launch_vector_add(x, y, out, n, TRITON_BLOCK_SIZE)
+            torch.cuda.synchronize()
             torch.testing.assert_close(out, x + y)
-        except AssertionError as exc:
-            return SmokeResult(f"triton-add-{n}", str(exc))
+        except Exception as exc:
+            results.append(SmokeResult(name, str(exc)))
+            break
+        results.append(SmokeResult(name))
 
-    return SmokeResult("triton-add")
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +147,7 @@ def main() -> int:
     results.append(_check_cuda_matmul())
 
     if results[-1].passed:
-        results.append(_check_triton_vector_add())
+        results.extend(_check_triton_vector_add())
     else:
         results.append(SmokeResult("triton-add", "skipped: CUDA matmul did not pass"))
 

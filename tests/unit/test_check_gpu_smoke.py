@@ -8,10 +8,15 @@ acceptance gate, not by this test module.
 
 from __future__ import annotations
 
-from scripts.check_gpu_smoke import FIXED_SIZES, SmokeResult, summarize_results
+from scripts import check_gpu_smoke
+
+FIXED_SIZES = check_gpu_smoke.FIXED_SIZES
+SmokeResult = check_gpu_smoke.SmokeResult
+summarize_results = check_gpu_smoke.summarize_results
 
 
 # ------------------------------------------------------------------ FIXED_SIZES
+
 
 def test_fixed_sizes_are_ordered_and_non_empty() -> None:
     assert len(FIXED_SIZES) >= 4
@@ -25,7 +30,17 @@ def test_fixed_sizes_include_edge_lengths() -> None:
     assert mandatory.issubset(set(FIXED_SIZES))
 
 
+def test_triton_result_names_include_each_required_size() -> None:
+    assert [check_gpu_smoke.triton_result_name(size) for size in FIXED_SIZES] == [
+        "triton-add-1",
+        "triton-add-257",
+        "triton-add-4096",
+        "triton-add-65537",
+    ]
+
+
 # ----------------------------------------------------------------- SmokeResult
+
 
 def test_smoke_result_default_is_pass() -> None:
     result = SmokeResult(name="test")
@@ -49,6 +64,7 @@ def test_smoke_result_repr_includes_name_and_status() -> None:
 
 
 # ------------------------------------------------------------- summarize_results
+
 
 def test_summarize_all_pass_returns_zero() -> None:
     results = [SmokeResult("a"), SmokeResult("b")]
