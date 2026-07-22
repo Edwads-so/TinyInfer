@@ -6,10 +6,17 @@ efficiency.
 
 ## Status
 
-The repository currently provides the engineering scaffold: packaging, validated
-configuration, environment diagnostics, tests, linting, typing, CI, and documentation.
-Model inference, continuous batching, paged KV cache, and Triton kernels are planned and
-are not implemented yet.
+**G0.5 Linux/GPU Environment Baseline** is verified. The repository provides:
+
+- A reproducible WSL2 Ubuntu-22.04 environment with Python 3.11, PyTorch CUDA,
+  Transformers, and Triton.
+- A standalone GPU correctness smoke test (BF16 matmul + Triton vector-add).
+- A unified G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
+- Engineering scaffold: packaging, validated configuration, environment diagnostics,
+  tests, linting, typing, CI, and documentation.
+
+Next milestone: R4 Reference Runtime data model. Model inference, continuous batching,
+paged KV cache, and Triton kernels are planned and are not implemented yet.
 
 ## Architecture Boundary
 
@@ -53,16 +60,35 @@ python -m ruff format --check .
 python -m mypy
 ```
 
+## G0.5 Verification (GPU required)
+
+```bash
+# Full G0.5 gate: lock check, env report, pytest, ruff, mypy, GPU smoke
+python scripts/verify_g0_5.py
+
+# GPU correctness smoke test only
+python scripts/check_gpu_smoke.py
+```
+
+The G0.5 verifier does not download models, install dependencies, or modify Git history.
+
 ## Reduced Roadmap
 
-1. Engineering foundation.
+**Completed:**
+1. Engineering foundation and G0.5 Linux/GPU environment baseline.
+
+**Planned:**
 2. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
 3. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
 4. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
 
 See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
-[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers WSL2 environment readiness, the Hugging
-Face reference runtime, correctness gates, and profiling outputs.
+[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers G0.5 environment baseline (completed),
+the Hugging Face reference runtime, correctness gates, and profiling outputs.
+
+For agent-executable workflow standards, see
+[Workflow Authoring Standard](docs/WORKFLOW_AUTHORING_STANDARD.md) and the
+[template](docs/templates/WORKFLOW_TEMPLATE.md).
 
 ## Correctness Policy
 

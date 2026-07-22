@@ -1,16 +1,21 @@
 # TinyInfer Phase 1 工作流程
 
-> 文档版本：v1.0
+> 文档版本：v1.1
 > 制定日期：2026-07-20
+> 最后修订：2026-07-22
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：R3 GPU 依赖安装完成，进入 R4 文档阶段
+> 状态：G0.5 环境基线验收通过，R4 待开始
 
 ## 1. 目标与工作量判断
 
 本阶段属于中等规模工程，不是大型推理系统开发。工作被严格限制为两部分：
 
-1. 在现有 WSL2 Ubuntu 中建立可复现的 Linux、Python、CUDA 和模型依赖环境。
-2. 基于 Hugging Face Qwen2.5-0.5B 实现单请求、greedy、显式 prefill/decode 的 reference runtime。
+1. **G0.5 Linux/GPU Environment Baseline**（已完成）：在现有 WSL2 Ubuntu 中建立可复现的
+   Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
+2. **R4-R7 + G1 Reference Runtime**（待开始）：基于 Hugging Face Qwen2.5-0.5B 实现单请求、
+   greedy、显式 prefill/decode 的 reference runtime。
+
+G0.5 是环境基线门，不是完整 Phase 1。完整 Phase 1 以 G1 为退出门。
 
 预计投入为 1–2 周兼职开发时间，新增约 8–12 个源码和测试文件，核心 Python 代码约 500–1000 行。工作量的主要风险来自环境、模型下载、正确性定义和计时方法，而不是代码行数。
 
@@ -24,7 +29,7 @@
 - HTTP 或 OpenAI-compatible API。
 - 多模型、量化、随机 sampling、分布式推理。
 
-这些功能必须在 Phase 1 验收通过后分别设计，禁止顺手加入。
+这些功能必须在 G1（完整 Phase 1）验收通过后分别设计，禁止在 G0.5 或 R4-R7 中顺手加入。
 
 ## 2. 已验证的当前状态
 
@@ -376,27 +381,17 @@ PY
 
 ### 8.6 环境快照
 
-扩展现有环境报告，至少输出：
+G0.5 已提供独立的 GPU smoke test 脚本（`scripts/check_gpu_smoke.py`）和环境检查器
+（`scripts/check_environment.py`）。两者职责分离：
 
-```text
-git revision
-distribution
-WSL version
-kernel
-Python
-PyTorch
-CUDA build
-driver
-GPU
-Transformers
-Safetensors
-Triton
-BF16 support
-```
+- `scripts/check_environment.py`：轻量级能力检查，报告包、CUDA、GPU 和 BF16 状态。
+- `scripts/check_gpu_smoke.py`：真实 GPU correctness 验证，包含 BF16 matmul 和
+  Triton vector-add。
 
 环境快照保存为 JSON，不包含用户名、token、代理凭据或其他秘密。
 
-R3 门槛：PyTorch、Transformers 和 Triton smoke tests 全部通过；`uv.lock` 可以在全新 `.venv` 中重建环境。
+R3 门槛：PyTorch、Transformers 和 Triton smoke tests 全部通过；`uv.lock` 可以在全新
+`.venv` 中重建环境；GPU smoke test 返回零退出码。
 
 ## 9. Phase 1 代码结构
 
@@ -716,7 +711,7 @@ Document Phase 1 results
 
 ## 17. Phase 1 验收清单
 
-### 环境 G0.5
+### G0.5 Linux/GPU Environment Baseline（已完成）
 
 - [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
 - [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
@@ -725,8 +720,11 @@ Document Phase 1 results
 - [x] 官方 Linux Triton vector-add correctness 通过。
 - [x] 环境报告不包含秘密信息。
 - [x] 现有单元测试、Ruff、format 和 mypy 通过。
+- [x] 独立 GPU smoke test 可重复执行并返回明确退出码。
+- [x] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查。
+- [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
 
-### Runtime G1
+### Runtime G1（待开始）
 
 - [ ] Qwen2.5-0.5B tokenizer 和模型从固定 revision 加载。
 - [ ] 显式 prefill 产生第一个 greedy token 和 cache。
@@ -736,10 +734,27 @@ Document Phase 1 results
 - [ ] 相同环境连续三次输出一致。
 - [ ] TTFT、prefill、decode、TPOT、吞吐、allocated/reserved VRAM 被记录。
 - [ ] 每个正式 workload warm-up 3 次并重复至少 5 次。
-- [ ] JSONL 包含环境、模型 revision 和 Git revision。
+- [ ] JSONL 包含环境、model revision 和 Git revision。
 - [ ] README 能用一组命令复现 correctness 和 reference benchmark。
 
-## 18. 完成后的下一决策
+## 18. G0.5 已完成决策
+
+G0.5 环境基线已验收通过。当前可执行命令：
+
+```bash
+# 完整 G0.5 验证（在 WSL2 环境中）
+python scripts/verify_g0_5.py
+
+# 仅 GPU correctness smoke test
+python scripts/check_gpu_smoke.py
+
+# 环境能力检查
+python scripts/check_environment.py --json
+```
+
+下一步进入 R4：Reference Runtime 数据模型开发。具体见本流程第 9-13 节。
+
+## 19. G1 完成后的下一决策
 
 只有 G1 全部通过后，才为 Phase 2 单独设计以下内容：
 
@@ -751,16 +766,29 @@ Document Phase 1 results
 
 Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直接得出 Triton kernel 方向。Triton 性能工作必须等待 paged runtime 正确后再由 profiling 选择。
 
-## 19. 本阶段交付物
+## 20. 本阶段交付物
+
+### G0.5 交付物（已完成）
 
 - 本流程文档。
-- WSL2/Linux 环境 lock file。
-- 可机器读取的环境报告。
-- Triton vector-add smoke test。
+- WSL2/Linux 环境 lock file（`uv.lock`）。
+- 可机器读取的环境报告（`docs/environment_report.json`）。
+- pip list 快照（`docs/environment_pip_list.txt`）。
+- 独立 GPU smoke test（`scripts/check_gpu_smoke.py`）。
+- G0.5 验收入口（`scripts/verify_g0_5.py`）。
+- G0.5 阶段报告（`docs/G0_5_REPORT.md`）。
+- 工作流编写标准与模板（`docs/WORKFLOW_AUTHORING_STANDARD.md`、
+  `docs/templates/WORKFLOW_TEMPLATE.md`）。
+- `v0.1.0-g0.5` 标签。
+
+### G1 后续交付物（待 R4-R7 实现）
+
 - 单请求 Hugging Face reference runtime。
 - correctness 固定 prompt 集。
 - JSONL reference benchmark。
-- Phase 1 README 使用说明。
+- Phase 1 完成报告。
+- `v0.1.0-phase1`（或等价标签）。
 - 一次经过测试和代码评审的 Git 分支合并。
 
-完成这些交付物后，TinyInfer 将从“工程骨架”进入“可运行的 LLM inference reference”，同时仍保持范围小、可解释和可验证。
+完成全部交付物后，TinyInfer 将从"工程骨架"进入"可运行的 LLM inference reference"，
+同时仍保持范围小、可解释和可验证。
