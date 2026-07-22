@@ -6,7 +6,13 @@ formatting of the G0.5 verifier without requiring a GPU or real tools.
 
 from __future__ import annotations
 
-from scripts.verify_g0_5 import STEP_SPECS, StepResult, run_steps
+from typing import Any
+
+from scripts import verify_g0_5
+
+STEP_SPECS = verify_g0_5.STEP_SPECS
+StepResult = verify_g0_5.StepResult
+run_steps = verify_g0_5.run_steps
 
 
 # ----------------------------------------------------------------- StepResult --
@@ -74,6 +80,29 @@ def test_run_steps_empty_specs_is_ok() -> None:
     """All steps already verified; verifier itself stays clean."""
     exit_code = run_steps([])
     assert exit_code == 0
+
+
+def test_execute_steps_does_not_run_after_first_failure() -> None:
+    calls: list[str] = []
+    step_spec_type = verify_g0_5.StepSpec
+
+    def runner(spec: Any) -> StepResult:
+        calls.append(spec.name)
+        if spec.name == "env-report":
+            return StepResult(spec.name, exit_code=2, error="failed")
+        return StepResult(spec.name)
+
+    results = verify_g0_5.execute_steps(
+        (
+            step_spec_type("lock-check", ("uv", "lock", "--check")),
+            step_spec_type("env-report", ("python", "env.py")),
+            step_spec_type("pytest", ("python", "-m", "pytest")),
+        ),
+        runner,
+    )
+
+    assert calls == ["lock-check", "env-report"]
+    assert [result.name for result in results] == calls
 
 
 # ------------------------------------------------------- STEP_SPECS predefined --

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -32,17 +32,31 @@ class StepResult:
         return self.exit_code == 0 and self.error is None
 
 
-# Predefined step specifications.
-# Each entry is (short_name, command_list, needs_gpu, description).
-STEP_SPECS: list[StepResult] = [
-    StepResult(name="lock-check"),
-    StepResult(name="env-report"),
-    StepResult(name="pytest"),
-    StepResult(name="ruff-check"),
-    StepResult(name="ruff-format"),
-    StepResult(name="mypy"),
-    StepResult(name="gpu-smoke"),
-]
+@dataclass(frozen=True, slots=True)
+class StepSpec:
+    """One command in the ordered G0.5 verification gate."""
+
+    name: str
+    command: tuple[str, ...]
+
+
+def build_step_specs(
+    python: str = sys.executable,
+    uv: str = "uv",
+) -> tuple[StepSpec, ...]:
+    """Build the fixed verification order for the active interpreter."""
+    return (
+        StepSpec("lock-check", (uv, "lock", "--check")),
+        StepSpec("env-report", (python, "scripts/check_environment.py", "--json")),
+        StepSpec("pytest", (python, "-m", "pytest")),
+        StepSpec("ruff-check", (python, "-m", "ruff", "check", ".")),
+        StepSpec("ruff-format", (python, "-m", "ruff", "format", "--check", ".")),
+        StepSpec("mypy", (python, "-m", "mypy")),
+        StepSpec("gpu-smoke", (python, "scripts/check_gpu_smoke.py")),
+    )
+
+
+STEP_SPECS = build_step_specs()
 
 
 def run_steps(results: Sequence[StepResult]) -> int:
@@ -53,23 +67,37 @@ def run_steps(results: Sequence[StepResult]) -> int:
     return 0
 
 
+def execute_steps(
+    specs: Sequence[StepSpec],
+    runner: Callable[[StepSpec], StepResult],
+) -> list[StepResult]:
+    """Execute ordered steps and stop immediately after the first failure."""
+    results: list[StepResult] = []
+    for spec in specs:
+        result = runner(spec)
+        results.append(result)
+        if not result.passed:
+            break
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Real execution helpers
 # ---------------------------------------------------------------------------
 
 
-def _run_cmd(name: str, cmd: list[str]) -> StepResult:
+def _run_cmd(spec: StepSpec) -> StepResult:
     """Run a subprocess and wrap the outcome."""
-    print(f"\n=== {name} ===  {' '.join(cmd)}")
+    print(f"\n=== {spec.name} ===  {' '.join(spec.command)}")
     try:
-        proc = subprocess.run(cmd, check=False, capture_output=False)
+        proc = subprocess.run(spec.command, check=False, capture_output=False)
     except FileNotFoundError as exc:
-        return StepResult(name=name, exit_code=127, error=str(exc))
+        return StepResult(name=spec.name, exit_code=127, error=str(exc))
     if proc.returncode == 0:
-        print(f"--- {name}: PASS ---")
-        return StepResult(name=name)
+        print(f"--- {spec.name}: PASS ---")
+        return StepResult(name=spec.name)
     return StepResult(
-        name=name,
+        name=spec.name,
         exit_code=proc.returncode,
         error=f"exit code {proc.returncode}",
     )
@@ -82,49 +110,20 @@ def _run_cmd(name: str, cmd: list[str]) -> StepResult:
 
 def main() -> int:
     """Run the full G0.5 verification gate."""
-    results: list[StepResult] = []
-
-    # 1. Lock file consistency
-    results.append(_run_cmd("lock-check", ["uv", "lock", "--check"]))
-
-    # 2. Environment report
-    results.append(
-        _run_cmd("env-report", [sys.executable, "scripts/check_environment.py", "--json"])
-    )
-
-    # 3. pytest
-    results.append(_run_cmd("pytest", [sys.executable, "-m", "pytest"]))
-
-    # 4. Ruff check
-    results.append(_run_cmd("ruff-check", [sys.executable, "-m", "ruff", "check", "."]))
-
-    # 5. Ruff format check
-    results.append(
-        _run_cmd("ruff-format", [sys.executable, "-m", "ruff", "format", "--check", "."])
-    )
-
-    # 6. Mypy
-    results.append(_run_cmd("mypy", [sys.executable, "-m", "mypy"]))
-
-    # 7. GPU smoke test
-    results.append(
-        _run_cmd("gpu-smoke", [sys.executable, "scripts/check_gpu_smoke.py"])
-    )
+    results = execute_steps(STEP_SPECS, _run_cmd)
 
     # --- Summary ---
     print()
-    all_ok = True
     for r in results:
         marker = "PASS" if r.passed else "FAIL"
         print(f"  [{marker}] {r.name}")
-        if not r.passed:
-            all_ok = False
     print()
-    if all_ok:
+    exit_code = run_steps(results)
+    if exit_code == 0 and len(results) == len(STEP_SPECS):
         print("G0.5 VERIFICATION: PASS")
         return 0
     print("G0.5 VERIFICATION: FAIL")
-    return 1
+    return exit_code if exit_code != 0 else 1
 
 
 if __name__ == "__main__":
