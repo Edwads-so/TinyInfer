@@ -6,14 +6,15 @@ efficiency.
 
 ## Status
 
-**G0.5 Linux/GPU Environment Baseline** is in progress. The Linux/GPU environment exists,
-and candidate smoke/verification scripts are under repair, but native WSL acceptance has not
-passed yet. Do not start R4 until the G0.5 gate is verified. The repository currently provides:
+**G0.5 Linux/GPU Environment Baseline** is in progress. Native WSL acceptance passed at
+tested revision `05b9160`, including two GPU smoke runs and the full verifier. Publication is
+still blocked by unstable GitHub/proxy access, so R4 remains locked until the release Gate is
+finished. The repository currently provides:
 
 - A reproducible WSL2 Ubuntu-22.04 environment with Python 3.11, PyTorch CUDA,
   Transformers, and Triton.
-- Candidate GPU correctness smoke test code (BF16 matmul + Triton vector-add).
-- A candidate G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
+- A GPU correctness smoke test (BF16 matmul + Triton vector-add), verified in native WSL.
+- A fail-fast G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
 - Engineering scaffold: packaging, validated configuration, environment diagnostics,
   tests, linting, typing, CI, and documentation.
 
@@ -80,7 +81,7 @@ The G0.5 verifier does not download models, install dependencies, or modify Git 
 1. Engineering foundation.
 
 **In progress / planned:**
-2. Verify the G0.5 Linux/GPU environment baseline in a native WSL worktree.
+2. Publish the locally accepted G0.5 Linux/GPU environment baseline.
 3. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
 4. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
 5. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.

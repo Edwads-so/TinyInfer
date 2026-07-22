@@ -4,13 +4,13 @@
 > 制定日期：2026-07-20
 > 最后修订：2026-07-22
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：G0.5 环境基线修复与原生 WSL 验收进行中，R4 禁止开始
+> 状态：G0.5 原生 WSL 本地验收已通过，网络/发布 Gate 未完成，R4 禁止开始
 
 ## 1. 目标与工作量判断
 
 本阶段属于中等规模工程，不是大型推理系统开发。工作被严格限制为两部分：
 
-1. **G0.5 Linux/GPU Environment Baseline**（进行中）：在现有 WSL2 Ubuntu 中建立可复现的
+1. **G0.5 Linux/GPU Environment Baseline**（本地验收通过、发布进行中）：在现有 WSL2 Ubuntu 中建立可复现的
    Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
 2. **R4-R7 + G1 Reference Runtime**（待开始）：基于 Hugging Face Qwen2.5-0.5B 实现单请求、
    greedy、显式 prefill/decode 的 reference runtime。
@@ -711,18 +711,19 @@ Document Phase 1 results
 
 ## 17. Phase 1 验收清单
 
-### G0.5 Linux/GPU Environment Baseline（进行中）
+### G0.5 Linux/GPU Environment Baseline（本地验收通过、发布进行中）
 
 - [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
 - [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
-- [ ] Python 3.11 项目环境已在全新原生 WSL worktree 中从 lock file 重建。
+- [x] Python 3.11 项目环境已在全新原生 WSL worktree 中从 lock file 离线重建。
 - [x] PyTorch CUDA、BF16、Transformers、Safetensors 导入通过。
-- [ ] 候选脚本在原生 WSL 中连续两次通过 Triton vector-add correctness。
+- [x] 候选脚本在原生 WSL 中连续两次通过 Triton vector-add correctness。
 - [x] 环境报告不包含秘密信息。
-- [ ] 候选分支的单元测试、Ruff、format 和 mypy 通过。
-- [ ] 独立 GPU smoke test 可重复执行并返回明确退出码。
-- [ ] G0.5 验收入口（`scripts/verify_g0_5.py`）编排全部质量检查。
+- [x] 候选分支的 35 项单元测试、Ruff、14 文件 format check 和 9 源文件 mypy 通过。
+- [x] 独立 GPU smoke test 可重复执行并返回明确退出码。
+- [x] G0.5 验收入口（`scripts/verify_g0_5.py`）按顺序编排全部质量检查并首错即停。
 - [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
+- [ ] GitHub、PyPI、Hugging Face 与私有仓库访问稳定，发布提交和标签完成。
 
 ### Runtime G1（待开始）
 
@@ -739,7 +740,7 @@ Document Phase 1 results
 
 ## 18. G0.5 当前决策
 
-G0.5 尚未验收通过。以下为候选命令，必须在修复质量门并转移到原生 WSL worktree 后执行：
+以下命令已在 `tested_revision` `05b9160` 的原生 WSL worktree 中通过。由于 R1 网络不稳定且尚未推送标签，G0.5 状态仍为 `in progress`：
 
 ```bash
 # 完整 G0.5 验证（在 WSL2 环境中）
@@ -752,7 +753,7 @@ python scripts/check_gpu_smoke.py
 python scripts/check_environment.py --json
 ```
 
-只有上述命令和本节验收清单全部产生新鲜 PASS 证据后，才允许进入 R4。具体见本流程第 9-13 节。
+只有剩余的网络与发布项也产生新鲜 PASS 证据后，才允许进入 R4。具体见本流程第 9-13 节。
 
 ## 19. G1 完成后的下一决策
 
@@ -768,7 +769,7 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
 
 ## 20. 本阶段交付物
 
-### G0.5 候选交付物（待验收）
+### G0.5 本地已验收交付物（待发布）
 
 - 本流程文档。
 - WSL2/Linux 环境 lock file（`uv.lock`）。
