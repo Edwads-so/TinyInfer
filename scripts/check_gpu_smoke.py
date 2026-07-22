@@ -79,7 +79,8 @@ def summarize_results(results: Sequence[SmokeResult]) -> int:
 
 def _check_cuda_matmul() -> SmokeResult:
     """Design §6.1 items 1-4."""
-    import torch
+    # Torch is an optional GPU dependency and is intentionally absent from CPU-only CI.
+    import torch  # type: ignore[import-not-found, unused-ignore]
 
     if not torch.cuda.is_available():
         return SmokeResult("cuda-available", "torch.cuda.is_available() == False")
