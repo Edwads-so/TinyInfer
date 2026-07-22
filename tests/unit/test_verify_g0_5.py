@@ -6,27 +6,7 @@ formatting of the G0.5 verifier without requiring a GPU or real tools.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import pytest
-
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-
-try:
-    from scripts.verify_g0_5 import StepResult, run_steps, STEP_SPECS
-except ImportError:
-    StepResult = None  # type: ignore[assignment]
-    run_steps = None  # type: ignore[assignment]
-    STEP_SPECS: list = []
-
-pytestmark = pytest.mark.skipif(
-    StepResult is None,
-    reason="scripts/verify_g0_5.py is not yet available",
-)
+from scripts.verify_g0_5 import STEP_SPECS, StepResult, run_steps
 
 
 # ----------------------------------------------------------------- StepResult --
@@ -43,6 +23,16 @@ def test_step_result_can_mark_failure() -> None:
     sr = StepResult(name="ruff-check", exit_code=1, error="ruff check failed")
     assert sr.passed is False
     assert sr.exit_code == 1
+
+
+def test_step_result_nonzero_exit_implies_failure() -> None:
+    sr = StepResult(name="pytest", exit_code=1)
+    assert sr.passed is False
+
+
+def test_step_result_error_implies_failure_even_with_zero_exit() -> None:
+    sr = StepResult(name="pytest", error="runner unavailable")
+    assert sr.passed is False
 
 
 # ----------------------------------------------------------------- run_steps ----

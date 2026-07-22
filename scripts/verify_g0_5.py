@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 # ---------------------------------------------------------------------------
 # Data structures shared with tests/unit/test_verify_g0_5.py
@@ -23,9 +23,13 @@ class StepResult:
     """Single verification step outcome."""
 
     name: str
-    passed: bool = True
     exit_code: int = 0
     error: str | None = None
+
+    @property
+    def passed(self) -> bool:
+        """Return true only for a zero exit code without a runner error."""
+        return self.exit_code == 0 and self.error is None
 
 
 # Predefined step specifications.
@@ -60,13 +64,12 @@ def _run_cmd(name: str, cmd: list[str]) -> StepResult:
     try:
         proc = subprocess.run(cmd, check=False, capture_output=False)
     except FileNotFoundError as exc:
-        return StepResult(name=name, passed=False, exit_code=127, error=str(exc))
+        return StepResult(name=name, exit_code=127, error=str(exc))
     if proc.returncode == 0:
         print(f"--- {name}: PASS ---")
         return StepResult(name=name)
     return StepResult(
         name=name,
-        passed=False,
         exit_code=proc.returncode,
         error=f"exit code {proc.returncode}",
     )
