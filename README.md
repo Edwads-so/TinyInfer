@@ -79,15 +79,15 @@ The G0.5 verifier does not download models, install dependencies, or modify Git 
 
 **Completed:**
 1. Engineering foundation.
+2. Reproducible G0.5 Linux/GPU environment baseline, verification gate, and release.
 
 **In progress / planned:**
-2. Publish the locally accepted G0.5 Linux/GPU environment baseline.
 3. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
 4. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
 5. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
 
 See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
-[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers the G0.5 environment baseline (in progress),
+[Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers the completed G0.5 environment baseline,
 the Hugging Face reference runtime, correctness gates, and profiling outputs.
 
 For agent-executable workflow standards, see

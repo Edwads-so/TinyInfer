@@ -1,16 +1,16 @@
 # TinyInfer Phase 1 工作流程
 
-> 文档版本：v1.1
+> 文档版本：v1.2
 > 制定日期：2026-07-20
-> 最后修订：2026-07-22
+> 最后修订：2026-07-23
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：G0.5 原生 WSL 本地验收已通过，网络/发布 Gate 未完成，R4 禁止开始
+> 状态：G0.5 已完成并发布；R4-R7 + G1 待开始
 
 ## 1. 目标与工作量判断
 
 本阶段属于中等规模工程，不是大型推理系统开发。工作被严格限制为两部分：
 
-1. **G0.5 Linux/GPU Environment Baseline**（本地验收通过、发布进行中）：在现有 WSL2 Ubuntu 中建立可复现的
+1. **G0.5 Linux/GPU Environment Baseline**（已完成并发布）：在现有 WSL2 Ubuntu 中建立可复现的
    Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
 2. **R4-R7 + G1 Reference Runtime**（待开始）：基于 Hugging Face Qwen2.5-0.5B 实现单请求、
    greedy、显式 prefill/decode 的 reference runtime。
@@ -711,7 +711,7 @@ Document Phase 1 results
 
 ## 17. Phase 1 验收清单
 
-### G0.5 Linux/GPU Environment Baseline（本地验收通过、发布进行中）
+### G0.5 Linux/GPU Environment Baseline（已完成并发布）
 
 - [x] WSL2 Ubuntu-22.04 状态、kernel 和 GPU 信息已记录。
 - [x] Linux checkout 位于 `/home/administrator/projects/TinyInfer`。
@@ -723,7 +723,7 @@ Document Phase 1 results
 - [x] 独立 GPU smoke test 可重复执行并返回明确退出码。
 - [x] G0.5 验收入口（`scripts/verify_g0_5.py`）按顺序编排全部质量检查并首错即停。
 - [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
-- [ ] GitHub、PyPI、Hugging Face 与私有仓库访问稳定，发布提交和标签完成。
+- [x] GitHub、PyPI、Hugging Face 与私有仓库访问稳定，发布提交和标签完成。
 
 ### Runtime G1（待开始）
 
