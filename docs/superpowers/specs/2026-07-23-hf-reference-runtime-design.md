@@ -93,23 +93,27 @@ tinyinfer/
 │   ├── timer.py
 │   └── record.py
 benchmarks/
+├── __init__.py
 ├── prompts.json
-├── bench_reference.py
-└── results/
-    └── g1_reference.jsonl
+└── bench_reference.py
 tests/
 ├── unit/
 │   ├── test_request.py
 │   ├── test_result.py
+│   ├── test_hf_loader.py
 │   ├── test_generation.py
+│   ├── test_prompts.py
 │   ├── test_timer.py
-│   └── test_record.py
+│   ├── test_record.py
+│   └── test_bench_reference.py
 └── integration/
     ├── test_hf_loader.py
     └── test_hf_reference_runtime.py
 docs/
 ├── R4_R7_G1_WORKFLOW.md
-└── G1_REFERENCE_RUNTIME_REPORT.md
+├── G1_REFERENCE_RUNTIME_REPORT.md
+└── results/
+    └── g1_reference.jsonl
 ```
 
 文件职责：
@@ -124,7 +128,7 @@ docs/
 | `record.py` | 将正确性、计时和环境身份转换为 schema v1 记录 |
 | `prompts.json` | 固定四类 G1 correctness/benchmark workload |
 | `bench_reference.py` | CLI、warm-up、重复运行、HF 对齐和 JSONL 写入 |
-| `g1_reference.jsonl` | G1 实机验收的小型规范结果集，可提交 |
+| `docs/results/g1_reference.jsonl` | G1 实机验收的小型规范结果集，可提交 |
 
 `.venv`、Hugging Face cache、模型权重、临时日志、Python cache 和未筛选的大型 profiler 输出
 不得提交。
@@ -228,6 +232,11 @@ GenerationRequest
 
 所有 forward 必须位于 `torch.inference_mode()` 内，不得创建梯度。
 
+`generate_greedy()` 接受可选的 `GenerationObserver` 协议。Observer 只接收 request 开始、
+prefill 开始/结束、第一个 token 可读、decode 开始/结束和 request 结束事件；它不能改变 token、
+Cache 或停止条件。未传 observer 时使用 no-op 路径。`InferenceTimer` 实现该协议，从而保证生成
+循环只有一份，profiling 不复制 runtime 控制流。
+
 ### 8.1 Prefill
 
 `prefill(...)` 一次输入完整 prompt。返回第一个 greedy token、更新后的公开 Cache 和必要 logits
@@ -315,6 +324,7 @@ JSON 中保存 prompt 原文、`max_new_tokens: 32` 与类别，不保存预计�
 - Host 使用 `time.perf_counter_ns()`。
 - Device 使用 `torch.cuda.Event(enable_timing=True)`。
 - CUDA event 读取前只在 `timer.py` 集中调用 synchronize。
+- `InferenceTimer` 通过 `GenerationObserver` 回调记录边界，不在 benchmark 中复制生成循环。
 - 首次下载、首次加载和首次 CUDA 初始化不计入 steady-state。
 
 ### 11.2 指标语义
@@ -353,6 +363,7 @@ Host 与 device 指标必须分字段保存，不得用一个无来源的 `prefi
   "warmup_runs": 3,
   "prompt_tokens": 0,
   "output_tokens": 0,
+  "output_token_ids": [],
   "stop_reason": "length",
   "token_agreement": 1.0,
   "first_mismatch_index": null,
@@ -380,7 +391,7 @@ Host 与 device 指标必须分字段保存，不得用一个无来源的 `prefi
 python benchmarks/bench_reference.py \
   --config configs/qwen2_5_0_5b.yaml \
   --prompts benchmarks/prompts.json \
-  --output benchmarks/results/g1_reference.jsonl \
+  --output docs/results/g1_reference.jsonl \
   --warmup-runs 3 \
   --repetitions 5
 ```
@@ -388,7 +399,8 @@ python benchmarks/bench_reference.py \
 CLI 行为：
 
 1. 输出文件已存在时默认拒绝覆盖；显式 `--overwrite` 才允许替换。
-2. 任何 workload agreement 小于 1.0 时退出码非零，并保留已写入的诊断记录。
+2. 任何 workload agreement 小于 1.0 时退出码非零，在 stderr 输出 case ID、两侧 token IDs 与首个
+   mismatch index；不得创建或替换 canonical JSONL。
 3. 记录写入采用临时文件加原子 rename，避免中断后把半行 JSON 当作有效结果。
 4. 成功时最后一行输出 `G1 REFERENCE RUNTIME: PASS`。
 5. 失败时最后一行输出 `G1 REFERENCE RUNTIME: FAIL`，并在其前输出 case ID 与失败类别。
