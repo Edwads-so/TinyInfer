@@ -34,6 +34,11 @@ include = ["tinyinfer*"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
+markers = [
+  "gpu: tests that require a CUDA-capable GPU",
+  "model: tests that require the fixed model revision",
+  "slow: tests that perform long-running generation",
+]
 
 [tool.ruff]
 line-length = 100
