@@ -170,3 +170,35 @@ def generate_greedy(
         text=text,
         stop_reason=stop_reason,
     )
+
+
+def reference_generate(
+    loaded: LoadedModel,
+    request: GenerationRequest,
+) -> tuple[int, ...]:
+    """Return only the generated suffix from Hugging Face ``generate``."""
+
+    encoded = loaded.tokenizer(
+        request.prompt,
+        return_tensors="pt",
+        add_special_tokens=True,
+    )
+    input_ids = encoded["input_ids"].to(loaded.model.device)
+    attention_mask = encoded["attention_mask"].to(loaded.model.device)
+    prompt_tokens = int(input_ids.shape[1])
+    torch = _load_torch()
+    with torch.inference_mode():
+        generated = loaded.model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            do_sample=False,
+            num_beams=1,
+            use_cache=True,
+            max_new_tokens=request.max_new_tokens,
+            eos_token_id=loaded.eos_token_id,
+            pad_token_id=loaded.pad_token_id,
+        )
+    suffix = tuple(int(token_id) for token_id in generated[0, prompt_tokens:].tolist())
+    if not suffix:
+        raise RuntimeError("Hugging Face reference returned no generated tokens")
+    return suffix

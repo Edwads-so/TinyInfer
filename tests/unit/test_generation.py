@@ -276,3 +276,45 @@ def test_generate_greedy_stops_correctly(
     assert result.output_token_ids == expected
     assert result.stop_reason == stop_reason
     assert result.text == " ".join(str(token_id) for token_id in expected)
+
+
+class FakeGeneratedTokens:
+    def __init__(self, values: list[int]) -> None:
+        self.values = values
+
+    def __getitem__(self, index: tuple[int, slice]) -> FakeTensor:
+        row, token_slice = index
+        assert row == 0
+        return FakeTensor(self.values[token_slice])
+
+
+def test_reference_generate_uses_greedy_settings_and_returns_only_suffix() -> None:
+    tokenizer = FakeTokenizer()
+
+    class Model:
+        device = "cuda"
+
+        def generate(self, **kwargs: Any) -> FakeGeneratedTokens:
+            assert kwargs["input_ids"].values == [[1, 2]]
+            assert kwargs["attention_mask"].values == [[1, 1]]
+            assert kwargs["do_sample"] is False
+            assert kwargs["num_beams"] == 1
+            assert kwargs["use_cache"] is True
+            assert kwargs["max_new_tokens"] == 3
+            assert kwargs["eos_token_id"] == 99
+            assert kwargs["pad_token_id"] == 99
+            return FakeGeneratedTokens([1, 2, 7, 8, 9])
+
+    loaded = LoadedModel(
+        model=Model(),
+        tokenizer=tokenizer,
+        model_id="Qwen/Qwen2.5-0.5B",
+        model_revision="revision",
+        eos_token_id=99,
+        pad_token_id=99,
+    )
+
+    assert generation.reference_generate(
+        loaded,
+        GenerationRequest("reference", "hello", 3),
+    ) == (7, 8, 9)

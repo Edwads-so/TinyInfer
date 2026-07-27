@@ -6,6 +6,7 @@ from tinyinfer.runtime.generation import (
     decode_one,
     generate_greedy,
     prefill,
+    reference_generate,
 )
 from tinyinfer.runtime.hf_loader import LoadedModel, ModelLoadError, load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
@@ -23,4 +24,5 @@ __all__ = [
     "generate_greedy",
     "load_reference_model",
     "prefill",
+    "reference_generate",
 ]

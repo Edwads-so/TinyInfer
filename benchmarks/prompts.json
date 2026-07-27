@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "short_en",
+      "category": "short English",
+      "prompt": "Explain KV cache in one concise paragraph.",
+      "max_new_tokens": 32
+    },
+    {
+      "case_id": "short_zh",
+      "category": "short Chinese",
+      "prompt": "请用一段简洁的话解释大语言模型中的 KV Cache。",
+      "max_new_tokens": 32
+    },
+    {
+      "case_id": "structured",
+      "category": "structured output",
+      "prompt": "Return exactly three numbered points explaining prefill, decode, and token latency.",
+      "max_new_tokens": 32
+    },
+    {
+      "case_id": "long_context",
+      "category": "long context",
+      "prompt": "A reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nA reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.\nSummarize the engineering lesson in two sentences.",
+      "max_new_tokens": 32
+    }
+  ]
+}

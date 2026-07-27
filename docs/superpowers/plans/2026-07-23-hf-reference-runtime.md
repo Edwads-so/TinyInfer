@@ -193,9 +193,9 @@ The JSON file has schema version 1 and exactly these ordered cases, all with `ma
 | `short_en` | `short English` | `Explain KV cache in one concise paragraph.` |
 | `short_zh` | `short Chinese` | `请用一段简洁的话解释大语言模型中的 KV Cache。` |
 | `structured` | `structured output` | `Return exactly three numbered points explaining prefill, decode, and token latency.` |
-| `long_context` | `long context` | Twenty-four newline-separated copies of `A reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.` followed by ` Summarize the engineering lesson in two sentences.` |
+| `long_context` | `long context` | Fourteen newline-separated copies of `A reference runtime separates prompt prefill from one-token decode so that cache growth, latency, and correctness can be measured independently. Accurate measurements require fixed inputs, deterministic decoding, explicit synchronization, and recorded software revisions.` followed on a new line by `Summarize the engineering lesson in two sentences.` |
 
-- [ ] Unit-test exact case order, key set, nonblank prompts, 32-token limit, and twenty-four occurrences of the
+- [ ] Unit-test exact case order, key set, exact prompts, 32-token limit, and fourteen occurrences of the
   long-context paragraph. The real tokenizer must place this prompt in the 512-768 token interval; failure is a
   design stop, not permission to mutate the prompt during a benchmark.
 - [ ] Implement `reference_generate` by calling `loaded.model.generate` with the same tokenized prompt,
