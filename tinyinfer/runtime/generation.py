@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
@@ -23,6 +23,48 @@ class DecodeOutput:
     next_token_id: int
     cache: Any
     attention_mask: Any
+
+
+class GenerationObserver(Protocol):
+    def request_started(self) -> None: ...
+
+    def prefill_started(self) -> None: ...
+
+    def prefill_finished(self) -> None: ...
+
+    def first_token_ready(self) -> None: ...
+
+    def decode_started(self) -> None: ...
+
+    def decode_finished(self, output_tokens: int) -> None: ...
+
+    def request_finished(self) -> None: ...
+
+
+class _NoOpGenerationObserver:
+    def request_started(self) -> None:
+        pass
+
+    def prefill_started(self) -> None:
+        pass
+
+    def prefill_finished(self) -> None:
+        pass
+
+    def first_token_ready(self) -> None:
+        pass
+
+    def decode_started(self) -> None:
+        pass
+
+    def decode_finished(self, output_tokens: int) -> None:
+        pass
+
+    def request_finished(self) -> None:
+        pass
+
+
+_NO_OP_OBSERVER = _NoOpGenerationObserver()
 
 
 def _load_torch() -> Any:
@@ -131,9 +173,12 @@ def decode_one(
 def generate_greedy(
     loaded: LoadedModel,
     request: GenerationRequest,
+    observer: GenerationObserver | None = None,
 ) -> GenerationResult:
     """Generate one request with explicit prefill and one-token decode."""
 
+    active_observer = observer if observer is not None else _NO_OP_OBSERVER
+    active_observer.request_started()
     encoded = loaded.tokenizer(
         request.prompt,
         return_tensors="pt",
@@ -142,11 +187,15 @@ def generate_greedy(
     input_ids = encoded["input_ids"].to(loaded.model.device)
     attention_mask = encoded["attention_mask"].to(loaded.model.device)
     prompt_token_ids = tuple(int(token_id) for token_id in input_ids[0].tolist())
+    active_observer.prefill_started()
     first = prefill(loaded.model, input_ids, attention_mask)
+    active_observer.prefill_finished()
     output_token_ids = [first.next_token_id]
+    active_observer.first_token_ready()
     cache = first.cache
     attention_mask = first.attention_mask
 
+    active_observer.decode_started()
     while (
         output_token_ids[-1] != loaded.eos_token_id
         and len(output_token_ids) < request.max_new_tokens
@@ -161,15 +210,18 @@ def generate_greedy(
         cache = decoded.cache
         attention_mask = decoded.attention_mask
 
+    active_observer.decode_finished(len(output_token_ids))
     stop_reason: StopReason = "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
     text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
-    return GenerationResult(
+    result = GenerationResult(
         request_id=request.request_id,
         prompt_token_ids=prompt_token_ids,
         output_token_ids=tuple(output_token_ids),
         text=text,
         stop_reason=stop_reason,
     )
+    active_observer.request_finished()
+    return result
 
 
 def reference_generate(

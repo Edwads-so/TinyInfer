@@ -1,6 +1,7 @@
 """Real-model smoke tests for explicit prefill and decode."""
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ pytest.importorskip("torch")
 pytest.importorskip("transformers")
 
 from tinyinfer.config import EngineConfig
+from tinyinfer.profiling import InferenceTimer
 from tinyinfer.runtime.generation import generate_greedy, reference_generate
 from tinyinfer.runtime.hf_loader import LoadedModel, load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
@@ -45,6 +47,34 @@ def test_explicit_runtime_respects_generation_limit(
     assert 1 <= len(result.output_token_ids) <= max_new_tokens
     if result.stop_reason == "length":
         assert len(result.output_token_ids) == max_new_tokens
+
+
+def test_inference_timer_records_real_cuda_metrics(
+    loaded_model: LoadedModel,
+) -> None:
+    timer = InferenceTimer()
+    result = generate_greedy(
+        loaded_model,
+        GenerationRequest("profiled", "Explain what a GPU cache is.", 2),
+        observer=timer,
+    )
+    timings = timer.timings
+
+    assert len(result.output_token_ids) == 2
+    float_metrics = (
+        timings.ttft_host_ms,
+        timings.prefill_host_ms,
+        timings.prefill_device_ms,
+        timings.decode_host_ms,
+        timings.decode_device_ms,
+        timings.tpot_host_ms,
+        timings.tpot_device_ms,
+        timings.output_tokens_per_s,
+    )
+    assert all(math.isfinite(value) and value >= 0 for value in float_metrics)
+    assert timings.output_tokens_per_s > 0
+    assert timings.peak_allocated_bytes > 0
+    assert timings.peak_reserved_bytes > 0
 
 
 def test_long_context_has_required_real_token_length(

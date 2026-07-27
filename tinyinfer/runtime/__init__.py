@@ -2,6 +2,7 @@
 
 from tinyinfer.runtime.generation import (
     DecodeOutput,
+    GenerationObserver,
     PrefillOutput,
     decode_one,
     generate_greedy,
@@ -14,6 +15,7 @@ from tinyinfer.runtime.result import GenerationResult, StopReason
 
 __all__ = [
     "DecodeOutput",
+    "GenerationObserver",
     "GenerationRequest",
     "GenerationResult",
     "LoadedModel",

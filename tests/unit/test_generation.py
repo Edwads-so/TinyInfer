@@ -318,3 +318,58 @@ def test_reference_generate_uses_greedy_settings_and_returns_only_suffix() -> No
         loaded,
         GenerationRequest("reference", "hello", 3),
     ) == (7, 8, 9)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected_output_count"),
+    [([99], 1), ([7, 8, 9], 3)],
+)
+def test_generate_greedy_emits_all_observer_events_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tokens: list[int],
+    expected_output_count: int,
+) -> None:
+    events: list[object] = []
+
+    class Observer:
+        def request_started(self) -> None:
+            events.append("request_started")
+
+        def prefill_started(self) -> None:
+            events.append("prefill_started")
+
+        def prefill_finished(self) -> None:
+            events.append("prefill_finished")
+
+        def first_token_ready(self) -> None:
+            events.append("first_token_ready")
+
+        def decode_started(self) -> None:
+            events.append("decode_started")
+
+        def decode_finished(self, output_tokens: int) -> None:
+            events.append(("decode_finished", output_tokens))
+
+        def request_finished(self) -> None:
+            events.append("request_finished")
+
+    result = generation.generate_greedy(
+        install_generation_steps(
+            monkeypatch,
+            tokens,
+            eos_token_id=99,
+        ),
+        GenerationRequest("observed", "hello", 3),
+        observer=Observer(),
+    )
+
+    assert len(result.output_token_ids) == expected_output_count
+    assert events == [
+        "request_started",
+        "prefill_started",
+        "prefill_finished",
+        "first_token_ready",
+        "decode_started",
+        ("decode_finished", expected_output_count),
+        "request_finished",
+    ]
