@@ -164,57 +164,37 @@ def _dependencies(
     )
 
 
-def test_load_prompt_cases_requires_exact_schema_and_order(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "prompts.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "cases": [
-                    {
-                        "case_id": case.case_id,
-                        "category": case.category,
-                        "prompt": case.prompt,
-                        "max_new_tokens": case.max_new_tokens,
-                    }
-                    for case in _cases()
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_load_prompt_cases_accepts_only_frozen_repository_workload() -> None:
+    cases = load_prompt_cases(Path("benchmarks/prompts.json"))
 
-    assert load_prompt_cases(path) == _cases()
+    assert tuple(case.case_id for case in cases) == CASE_IDS
+    assert all(case.max_new_tokens == 32 for case in cases)
 
 
 @pytest.mark.parametrize(
     "mutation",
-    ["schema", "order", "extra-key", "duplicate"],
+    ["schema", "order", "extra-key", "duplicate", "prompt", "category"],
 )
 def test_load_prompt_cases_rejects_invalid_workload_schema(
     tmp_path: Path,
     mutation: str,
 ) -> None:
-    cases = [
-        {
-            "case_id": case.case_id,
-            "category": case.category,
-            "prompt": case.prompt,
-            "max_new_tokens": case.max_new_tokens,
-        }
-        for case in _cases()
-    ]
-    payload: dict[str, Any] = {"schema_version": 1, "cases": cases}
+    payload: dict[str, Any] = json.loads(
+        Path("benchmarks/prompts.json").read_text(encoding="utf-8")
+    )
+    cases = payload["cases"]
     if mutation == "schema":
         payload["schema_version"] = 2
     elif mutation == "order":
         cases[0], cases[1] = cases[1], cases[0]
     elif mutation == "extra-key":
         cases[0]["extra"] = True
-    else:
+    elif mutation == "duplicate":
         cases[1]["case_id"] = "short_en"
+    elif mutation == "prompt":
+        cases[0]["prompt"] = "A different prompt."
+    else:
+        cases[0]["category"] = "a different category"
     path = tmp_path / "invalid.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -360,48 +340,13 @@ def test_main_reports_mismatch_and_leaves_canonical_output_untouched(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    config = tmp_path / "config.yaml"
-    config.write_text(
-        "model_id: Qwen/Qwen2.5-0.5B\n"
-        "dtype: bfloat16\n"
-        "device: cuda\n"
-        "max_sequence_length: 4096\n"
-        "kv_block_size: 16\n",
-        encoding="utf-8",
-    )
-    prompts = tmp_path / "prompts.json"
-    prompts.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "cases": [
-                    {
-                        "case_id": case.case_id,
-                        "category": case.category,
-                        "prompt": case.prompt,
-                        "max_new_tokens": case.max_new_tokens,
-                    }
-                    for case in _cases()
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
     output = tmp_path / "canonical.jsonl"
     output.write_text("original\n", encoding="utf-8")
 
     exit_code = bench_reference.main(
         [
-            "--config",
-            str(config),
-            "--prompts",
-            str(prompts),
             "--output",
             str(output),
-            "--warmup-runs",
-            "1",
-            "--repetitions",
-            "2",
             "--overwrite",
         ],
         dependencies=_dependencies([], mode="mismatch"),
@@ -425,10 +370,6 @@ def test_main_writes_ordered_records_and_reports_pass(
         [
             "--output",
             str(output),
-            "--warmup-runs",
-            "1",
-            "--repetitions",
-            "2",
         ],
         dependencies=_dependencies([]),
     )
@@ -439,8 +380,87 @@ def test_main_writes_ordered_records_and_reports_pass(
     assert captured.err == ""
     assert captured.out.rstrip().endswith("G1 REFERENCE RUNTIME: PASS")
     assert [(payload["case_id"], payload["repetition"]) for payload in payloads] == [
-        (case_id, repetition) for case_id in CASE_IDS for repetition in range(2)
+        (case_id, repetition) for case_id in CASE_IDS for repetition in range(5)
     ]
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--warmup-runs", "0"), ("--warmup-runs", "4"), ("--repetitions", "1")],
+)
+def test_main_rejects_noncanonical_run_counts_before_loading_model(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
+    value: str,
+) -> None:
+    output = tmp_path / "canonical.jsonl"
+    calls: list[tuple[str, bool]] = []
+
+    exit_code = bench_reference.main(
+        ["--output", str(output), flag, value],
+        dependencies=_dependencies(calls),
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "canonical" in captured.err
+    assert captured.out.rstrip().endswith("G1 REFERENCE RUNTIME: FAIL")
+    assert calls == []
+    assert not output.exists()
+
+
+def test_main_rejects_noncanonical_cuda_device_before_loading_model(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "model_id: Qwen/Qwen2.5-0.5B\n"
+        "dtype: bfloat16\n"
+        "device: cuda:1\n"
+        "max_sequence_length: 4096\n"
+        "kv_block_size: 16\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "canonical.jsonl"
+    calls: list[tuple[str, bool]] = []
+
+    exit_code = bench_reference.main(
+        ["--config", str(config), "--output", str(output)],
+        dependencies=_dependencies(calls),
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "default engine configuration" in captured.err
+    assert captured.out.rstrip().endswith("G1 REFERENCE RUNTIME: FAIL")
+    assert calls == []
+    assert not output.exists()
+
+
+def test_main_rejects_incomplete_record_set_before_writing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "canonical.jsonl"
+    monkeypatch.setattr(
+        bench_reference,
+        "run_benchmark",
+        lambda **_: [_valid_record()] * 19,
+    )
+
+    exit_code = bench_reference.main(
+        ["--output", str(output)],
+        dependencies=_dependencies([]),
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "20 records" in captured.err
+    assert captured.out.rstrip().endswith("G1 REFERENCE RUNTIME: FAIL")
+    assert not output.exists()
 
 
 def test_main_refuses_existing_output_before_loading_model(

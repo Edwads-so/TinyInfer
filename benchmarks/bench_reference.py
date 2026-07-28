@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import importlib.metadata
 import json
@@ -32,6 +33,10 @@ from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
 
 EXPECTED_CASE_IDS = ("short_en", "short_zh", "structured", "long_context")
+CANONICAL_PROMPT_DIGEST = "c341df7fdef5bd3b8d8279bea9f0388f825241e6baa1f683e7910079b0b486db"
+CANONICAL_WARMUP_RUNS = 3
+CANONICAL_REPETITIONS = 5
+CANONICAL_RECORD_COUNT = len(EXPECTED_CASE_IDS) * CANONICAL_REPETITIONS
 CONFIG_KEYS = (
     "model_id",
     "dtype",
@@ -158,6 +163,15 @@ def load_prompt_cases(path: Path) -> tuple[PromptCase, ...]:
         raise ValueError("prompt file must contain only schema_version and cases")
     if payload["schema_version"] != 1 or not isinstance(payload["cases"], list):
         raise ValueError("prompt file requires schema_version 1 and a cases list")
+    canonical_payload = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    prompt_digest = hashlib.sha256(canonical_payload).hexdigest()
+    if prompt_digest != CANONICAL_PROMPT_DIGEST:
+        raise ValueError("prompt content must match the frozen G1 workload")
 
     cases: list[PromptCase] = []
     expected_keys = {"case_id", "category", "prompt", "max_new_tokens"}
@@ -179,6 +193,45 @@ def load_prompt_cases(path: Path) -> tuple[PromptCase, ...]:
     if case_ids != EXPECTED_CASE_IDS:
         raise ValueError(f"prompt case order must be {EXPECTED_CASE_IDS}, got {case_ids}")
     return tuple(cases)
+
+
+def _validate_canonical_inputs(
+    config: EngineConfig,
+    cases: Sequence[PromptCase],
+    *,
+    warmup_runs: int,
+    repetitions: int,
+) -> None:
+    if config != EngineConfig():
+        raise BenchmarkError("canonical G1 requires the fixed default engine configuration")
+    if warmup_runs != CANONICAL_WARMUP_RUNS:
+        raise BenchmarkError(f"canonical G1 requires exactly {CANONICAL_WARMUP_RUNS} warm-up runs")
+    if repetitions != CANONICAL_REPETITIONS:
+        raise BenchmarkError(
+            f"canonical G1 requires exactly {CANONICAL_REPETITIONS} measured repetitions"
+        )
+    if tuple(case.case_id for case in cases) != EXPECTED_CASE_IDS:
+        raise BenchmarkError("canonical G1 requires the frozen prompt cases")
+
+
+def _validate_canonical_records(records: Sequence[BenchmarkRecord]) -> None:
+    if len(records) != CANONICAL_RECORD_COUNT:
+        raise BenchmarkError(f"canonical G1 requires exactly {CANONICAL_RECORD_COUNT} records")
+    expected_order = [
+        (case_id, repetition)
+        for case_id in EXPECTED_CASE_IDS
+        for repetition in range(CANONICAL_REPETITIONS)
+    ]
+    actual_order = [(record.case_id, record.repetition) for record in records]
+    if actual_order != expected_order:
+        raise BenchmarkError("canonical G1 records have invalid case or repetition order")
+    if any(record.warmup_runs != CANONICAL_WARMUP_RUNS for record in records):
+        raise BenchmarkError("canonical G1 records have an invalid warm-up count")
+    if any(
+        record.token_agreement != 1.0 or record.first_mismatch_index is not None
+        for record in records
+    ):
+        raise BenchmarkError("canonical G1 records require exact token agreement")
 
 
 def _ensure_output_available(output: Path, *, overwrite: bool) -> None:
@@ -423,6 +476,12 @@ def main(
         _ensure_output_available(args.output, overwrite=args.overwrite)
         config = load_engine_config(args.config)
         cases = load_prompt_cases(args.prompts)
+        _validate_canonical_inputs(
+            config,
+            cases,
+            warmup_runs=args.warmup_runs,
+            repetitions=args.repetitions,
+        )
         records = run_benchmark(
             config=config,
             cases=cases,
@@ -430,6 +489,7 @@ def main(
             repetitions=args.repetitions,
             dependencies=(dependencies if dependencies is not None else default_dependencies()),
         )
+        _validate_canonical_records(records)
         write_records_atomic(
             records,
             args.output,
