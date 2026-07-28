@@ -2,11 +2,11 @@
 
 > 面向当前项目代码的解释文档
 >
-> 当前覆盖范围：G0.5 环境基线，以及 Phase 1 Task 1–6
+> 当前覆盖范围：G0.5 环境基线，以及 Phase 1 Task 1–7
 >
 > 当前分支：`agent/hf-runtime-fix`
 >
-> 文档基线提交：`84d8572`
+> 文档基线提交：`ebd9a00`
 
 ## 1. 这个项目现在究竟在做什么
 
@@ -45,9 +45,10 @@ vLLM 类运行时。
 | Task 4 | 冻结 workload，并证明四类 prompt token 完全一致 | `fe5ccdc` |
 | Task 5 | Host/CUDA 分阶段计时和显存峰值观测 | `815af33` |
 | Task 6 | token agreement 与 benchmark schema-v1 | `84d8572` |
-| Task 7 | benchmark CLI、20 条正式记录和 G1 报告 | 尚未开始 |
+| Task 7 | benchmark CLI 与 20 条正式记录 | `b5225f8` / `ebd9a00` |
+| Task 8 | G1 报告与发布 Gate | 本地报告完成，等待远端 CI |
 
-因此准确状态是：**Phase 1 正在进行，Task 1–6 已实现；G1 尚未完成。**
+因此准确状态是：**Task 1–7 与 G1 本地 Gate 已实现；最终 `verified` 等待远端 CI。**
 
 ## 3. 一次文本生成的完整路径
 
@@ -416,7 +417,43 @@ JSONL 的成功记录，所以它强制：
 这种区分可以防止失败的对齐结果被误写成正式 benchmark 证据。结构化记录能够被测试、汇总、
 复查，并在技术报告中追溯到模型 SHA、Git SHA、prompt、token 和环境。
 
-## 12. 建议的学习顺序
+## 12. Task 7：从一次运行到 canonical evidence
+
+`benchmarks/bench_reference.py` 把前面的 runtime、reference、timer 和 record 串成一个可复现
+实验：
+
+```text
+加载模型一次
+  -> 每个 case 计算一次 HF reference
+  -> warm-up 3 次（不记录）
+  -> 正式运行 5 次（每次独立 timer）
+  -> 每次检查 agreement
+  -> 检查同一 case 五次 token tuple 一致
+  -> 构造 20 条 BenchmarkRecord
+  -> 写入 sibling .tmp
+  -> fsync + os.replace
+```
+
+CLI 在开始模型加载前拒绝意外覆盖已有文件。只有显式 `--overwrite` 才允许替换；即便允许覆盖，
+alignment 或序列化中途失败时，旧 canonical 文件仍保持不变。
+
+`BenchmarkDependencies` 把 loader、TinyInfer runner、HF runner、timer、record factory、环境身份和
+Git SHA provider 集中注入。CPU unit tests 因此可以精确验证 3 次 warm-up、5 次正式运行、输出
+顺序和失败行为，而真实 GPU Gate 使用默认依赖。
+
+代码和结果采用两个提交也是有意设计：
+
+- `b5225f8` 包含实际被测试和运行的 CLI 代码；
+- `ebd9a00` 只增加记录 `b5225f8` 完整 SHA 的 JSONL。
+
+如果代码和“记录当前提交 SHA”的 JSONL 强行放在同一个提交里，就会形成无法实现的
+self-reference：运行 benchmark 时最终提交 SHA 还不存在。
+
+Canonical benchmark 在原生 WSL 文件系统上运行，而不是 `/mnt/d`。结果是四类各 5 条、
+agreement 全部 1.0；long case prompt 为 612 tokens，并与 HF 一致地在 26 个 output tokens
+产生 EOS。
+
+## 13. 建议的学习顺序
 
 1. 阅读 `request.py` 和 `result.py`，理解为什么先冻结输入输出契约。
 2. 阅读 `generation.py::prefill`，画出 input/logits/cache 的 shape。
@@ -426,9 +463,11 @@ JSONL 的成功记录，所以它强制：
 6. 阅读 `test_generation.py`，将每个 fake 对象对应到真实 PyTorch 对象。
 7. 阅读 `timer.py`，画出七个 callback 的状态转换。
 8. 手算 `test_timer.py` 中的 TTFT、TPOT 和 throughput，再运行测试核对。
-9. 最后阅读 integration tests，理解哪些结论必须由真实 GPU 才能证明。
+9. 阅读 `record.py`，解释为什么失败比较不能进入 canonical record。
+10. 阅读 `bench_reference.py`，追踪一个 case 从 reference 到五条 JSONL 的过程。
+11. 最后阅读 integration tests 和 G1 report，理解哪些结论必须由真实 GPU 才能证明。
 
-## 13. 你现在应该能够回答的问题
+## 14. 你现在应该能够回答的问题
 
 - prefill 和 decode 的输入 shape 为什么不同？
 - 为什么第一个 output token 来自 prefill？
@@ -438,6 +477,8 @@ JSONL 的成功记录，所以它强制：
 - 为什么 CUDA 性能不能只用普通 Python timer？
 - TTFT 和 TPOT 分别对应什么用户体验？
 - Observer 为什么能避免复制生成循环？
+- 为什么 canonical JSONL 与被测试代码必须分成两个提交？
+- 原子 `.tmp` + `os.replace` 防止了什么损坏？
 - 当前项目为什么还不能声称实现了自己的 KV Cache？
 
 如果这些问题能够用自己的话回答，并能指出对应代码和测试，Phase 1 的学习目标就不仅是

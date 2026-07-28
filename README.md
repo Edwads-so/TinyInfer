@@ -9,23 +9,36 @@ efficiency.
 **G0.5 Linux/GPU Environment Baseline** is complete. Native WSL acceptance passed at
 tested revision `05b9160`, including two GPU smoke runs and the full verifier. The release is
 published from the documentation-only release revision identified by tag `v0.1.0-g0.5`.
+
+**G1 Hugging Face Reference Runtime** is a local release candidate. CPU, WSL GPU/model,
+token-alignment, and canonical benchmark gates passed on tested revision `b5225f8`; 20
+canonical records are committed in `docs/results/g1_reference.jsonl`. Final `verified`
+status remains pending until the feature branch is pushed and GitHub CI succeeds.
+
 The repository currently provides:
 
 - A reproducible WSL2 Ubuntu-22.04 environment with Python 3.11, PyTorch CUDA,
   Transformers, and Triton.
 - A GPU correctness smoke test (BF16 matmul + Triton vector-add), verified in native WSL.
 - A fail-fast G0.5 verification entrypoint (`scripts/verify_g0_5.py`).
+- Fixed-revision Qwen2.5-0.5B loading.
+- A TinyInfer-controlled greedy prefill and one-token decode loop.
+- Four-case exact token alignment against Hugging Face `model.generate()`.
+- Host/CUDA phase timing, throughput, and peak-memory observation.
+- An atomic benchmark CLI and 20 schema-v1 canonical records.
 - Engineering scaffold: packaging, validated configuration, environment diagnostics,
   tests, linting, typing, CI, and documentation.
 
-Next milestone after G0.5 acceptance: R4 Reference Runtime data model. Model inference, continuous batching,
-paged KV cache, and Triton kernels are planned and are not implemented yet.
+Runtime-owned KV cache, continuous batching, paged KV cache, API serving, and custom
+Triton performance kernels are not implemented. They remain separate post-G1 phases.
 
 ## Architecture Boundary
 
-Hugging Face will provide the Qwen2.5 model structure, tokenizer, weights, and correctness
-baseline. TinyInfer will own request state, the explicit prefill/decode loop, scheduling,
-profiling, cache allocation, block tables, and the Qwen attention cache adapter.
+Hugging Face provides the Qwen2.5 model structure, tokenizer, weights, correctness
+baseline, and the public reference `Cache`. TinyInfer currently owns request/result
+contracts, the explicit prefill/decode loop, correctness comparison, profiling, and
+benchmark records. Scheduling, cache allocation, block tables, and the Qwen attention
+cache adapter are planned Phase 2+ responsibilities.
 
 ## Requirements
 
@@ -75,21 +88,51 @@ python scripts/check_gpu_smoke.py
 
 The G0.5 verifier does not download models, install dependencies, or modify Git history.
 
+## G1 Reference Runtime (GPU required)
+
+Run correctness and the benchmark from a native Linux/WSL2 checkout with the fixed model
+already cached:
+
+```bash
+uv sync --locked --extra dev --extra inference --extra kernels
+
+HF_HUB_OFFLINE=1 python -m pytest tests/integration -m "gpu and model" -v
+
+HF_HUB_OFFLINE=1 python benchmarks/bench_reference.py \
+  --config configs/qwen2_5_0_5b.yaml \
+  --prompts benchmarks/prompts.json \
+  --output /tmp/tinyinfer-g1/reference.jsonl \
+  --warmup-runs 3 \
+  --repetitions 5 \
+  --overwrite
+```
+
+Canonical inputs and evidence:
+
+- [model configuration](configs/qwen2_5_0_5b.yaml)
+- [frozen prompts](benchmarks/prompts.json)
+- [benchmark CLI](benchmarks/bench_reference.py)
+- [20-record canonical JSONL](docs/results/g1_reference.jsonl)
+- [G1 reference runtime report](docs/G1_REFERENCE_RUNTIME_REPORT.md)
+
 ## Reduced Roadmap
 
 **Completed:**
 1. Engineering foundation.
 2. Reproducible G0.5 Linux/GPU environment baseline, verification gate, and release.
+3. Local G1 reference-runtime implementation, exact token alignment, profiling, and
+   canonical benchmark evidence.
 
 **In progress / planned:**
-3. Hugging Face Qwen2.5-0.5B reference runtime with explicit prefill/decode profiling.
-4. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
-5. One profile-guided Triton kernel, reproducible benchmarks, technical report, and demo.
+4. G1 remote CI/release gate.
+5. Contiguous KV cache, continuous batching, paged KV cache, and a Qwen attention adapter.
+6. One profile-guided Triton kernel, reproducible comparative benchmarks, technical
+   report, and demo.
 
 See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
 [Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers the completed G0.5 environment baseline,
 the Hugging Face reference runtime, correctness gates, and profiling outputs.
-For a code-oriented explanation of the implemented Task 1–5 runtime, read the
+For a code-oriented explanation of the implemented Task 1–7 runtime, read the
 [Phase 1 learning guide](docs/PHASE1_LEARNING_GUIDE.md).
 
 For agent-executable workflow standards, see

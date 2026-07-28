@@ -1,10 +1,10 @@
 # TinyInfer Phase 1 工作流程
 
-> 文档版本：v1.2
+> 文档版本：v1.3
 > 制定日期：2026-07-20
-> 最后修订：2026-07-23
+> 最后修订：2026-07-28
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：G0.5 已完成并发布；R4-R7 + G1 待开始
+> 状态：G0.5 已完成并发布；R4-R7 本地验收完成；G1 等待远端 CI Gate
 
 ## 1. 目标与工作量判断
 
@@ -12,8 +12,9 @@
 
 1. **G0.5 Linux/GPU Environment Baseline**（已完成并发布）：在现有 WSL2 Ubuntu 中建立可复现的
    Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
-2. **R4-R7 + G1 Reference Runtime**（待开始）：基于 Hugging Face Qwen2.5-0.5B 实现单请求、
-   greedy、显式 prefill/decode 的 reference runtime。
+2. **R4-R7 + G1 Reference Runtime**（本地候选已完成）：基于 Hugging Face
+   Qwen2.5-0.5B 实现单请求、greedy、显式 prefill/decode 的 reference runtime；最终
+   `verified` 状态仍等待 feature branch 的 GitHub CI。
 
 G0.5 是环境基线门，不是完整 Phase 1。完整 Phase 1 以 G1 为退出门。
 
@@ -725,18 +726,19 @@ Document Phase 1 results
 - [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
 - [x] GitHub、PyPI、Hugging Face 与私有仓库访问稳定，发布提交和标签完成。
 
-### Runtime G1（待开始）
+### Runtime G1（本地 Gate 已通过，等待远端 CI）
 
-- [ ] Qwen2.5-0.5B tokenizer 和模型从固定 revision 加载。
-- [ ] 显式 prefill 产生第一个 greedy token 和 cache。
-- [ ] 显式 decode 每轮只输入一个 token并更新 cache。
-- [ ] 四类固定 prompt 连续生成 32 tokens。
-- [ ] TinyInfer 与 `model.generate()` token agreement 为 100%。
-- [ ] 相同环境连续三次输出一致。
-- [ ] TTFT、prefill、decode、TPOT、吞吐、allocated/reserved VRAM 被记录。
-- [ ] 每个正式 workload warm-up 3 次并重复至少 5 次。
-- [ ] JSONL 包含环境、model revision 和 Git revision。
-- [ ] README 能用一组命令复现 correctness 和 reference benchmark。
+- [x] Qwen2.5-0.5B tokenizer 和模型从固定 revision 加载。
+- [x] 显式 prefill 产生第一个 greedy token 和 cache。
+- [x] 显式 decode 每轮只输入一个 token并更新 cache。
+- [x] 四类固定 prompt 的 `max_new_tokens=32`；long case 与 HF 一致地在 26 tokens 触发 EOS。
+- [x] TinyInfer 与 `model.generate()` token agreement 为 100%。
+- [x] 相同环境每个 case 五次正式输出 token tuple 一致。
+- [x] TTFT、prefill、decode、TPOT、吞吐、allocated/reserved VRAM 被记录。
+- [x] 每个正式 workload warm-up 3 次并重复 5 次。
+- [x] JSONL 包含环境、model revision 和 Git revision。
+- [x] README 能用一组命令复现 correctness 和 reference benchmark。
+- [ ] Feature branch 已推送，GitHub CI 对最终文档提交返回 success。
 
 ## 18. G0.5 当前决策
 
@@ -782,14 +784,15 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
   `docs/templates/WORKFLOW_TEMPLATE.md`）。
 - 验收后创建并发布的 `v0.1.0-g0.5` 标签。
 
-### G1 后续交付物（待 R4-R7 实现）
+### G1 本地候选交付物
 
-- 单请求 Hugging Face reference runtime。
-- correctness 固定 prompt 集。
-- JSONL reference benchmark。
-- Phase 1 完成报告。
-- `v0.1.0-phase1`（或等价标签）。
-- 一次经过测试和代码评审的 Git 分支合并。
+- [x] 单请求 Hugging Face reference runtime。
+- [x] correctness 固定 prompt 集。
+- [x] 20 条 canonical JSONL reference benchmark。
+- [x] G1 Reference Runtime Report。
+- [ ] GitHub CI 成功。
+- [ ] 经过代码评审的分支合并。
+- [ ] 获批后创建 G1 annotated tag。
 
-完成全部交付物后，TinyInfer 将从"工程骨架"进入"可运行的 LLM inference reference"，
-同时仍保持范围小、可解释和可验证。
+远端 CI 与合并 Gate 完成后，TinyInfer 才能从“G1 本地候选”正式转为
+“可运行、已验证的 LLM inference reference”，同时仍保持范围小、可解释和可验证。
