@@ -89,6 +89,8 @@ The G0.5 verifier does not download models, install dependencies, or modify Git 
 See [the project plan](docs/PROJECT_PLAN.md) for phase gates and non-goals. The detailed
 [Phase 1 workflow](docs/PHASE1_WORKFLOW.md) covers the completed G0.5 environment baseline,
 the Hugging Face reference runtime, correctness gates, and profiling outputs.
+For a code-oriented explanation of the implemented Task 1–5 runtime, read the
+[Phase 1 learning guide](docs/PHASE1_LEARNING_GUIDE.md).
 
 For agent-executable workflow standards, see
 [Workflow Authoring Standard](docs/WORKFLOW_AUTHORING_STANDARD.md) and the
