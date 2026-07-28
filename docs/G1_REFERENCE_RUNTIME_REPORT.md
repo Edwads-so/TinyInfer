@@ -2,8 +2,8 @@
 
 > 报告日期：2026-07-28
 >
-> 状态：`in progress` — 本地 CPU、GPU、correctness 与 benchmark Gate 已通过；
-> 最终 `verified` 仍等待 feature branch 推送后的 GitHub CI
+> 状态：`release candidate` — 本地 CPU、GPU、correctness、benchmark 与首轮 feature CI
+> 已通过；最终 `verified` 等待评审加固提交的 CI 与合并
 >
 > tested revision：`b5225f8e7c70d981c0c19015513594f28f163063`
 >
@@ -174,9 +174,12 @@ G1 REFERENCE RUNTIME: PASS
 - JSONL 独立验证：20 records、4 cases × 5、agreement 1.0、每 case 单一 output tuple；
 - 最终 candidate benchmark 重新运行 PASS，且四个 case 的 token tuples 与 canonical 完全一致；
 - Ruff check、Ruff format、Mypy 和 `git diff --check`：通过。
+- Feature CI：提交 `727faed` 的 GitHub Actions run `30369261505` 全部步骤成功；
+- 评审后 canonical Gate：冻结 prompt 语义哈希、固定 config、3 warm-ups、5 repetitions、
+  20 条有序 records 与 exact agreement 均由 CLI 强制执行；CPU suite 更新为 185 passed。
 
-在 feature branch 推送并取得 GitHub CI success 前，正式状态仍是 `in progress`，不得标记
-`verified` 或创建 G1 release tag。
+评审加固与本状态文档所在的最终 feature commit 仍需取得 GitHub CI success，并合并到 `main`。
+在 `main` 的合并提交通过 CI 前，不得标记 `verified` 或创建 G1 release tag。
 
 ## 12. 限制与下一阶段边界
 

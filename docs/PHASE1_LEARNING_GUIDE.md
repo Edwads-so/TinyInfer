@@ -46,9 +46,10 @@ vLLM 类运行时。
 | Task 5 | Host/CUDA 分阶段计时和显存峰值观测 | `815af33` |
 | Task 6 | token agreement 与 benchmark schema-v1 | `84d8572` |
 | Task 7 | benchmark CLI 与 20 条正式记录 | `b5225f8` / `ebd9a00` |
-| Task 8 | G1 报告与发布 Gate | 本地报告完成，等待远端 CI |
+| Task 8 | G1 报告与发布 Gate | 首轮远端 CI 通过；评审加固完成，等待最终 CI 与合并 |
 
-因此准确状态是：**Task 1–7 与 G1 本地 Gate 已实现；最终 `verified` 等待远端 CI。**
+因此准确状态是：**Task 1–7 与 G1 本地 Gate 已实现；首轮远端 CI 已通过，最终
+`verified` 等待评审修复提交的 CI 与合并。**
 
 ## 3. 一次文本生成的完整路径
 
@@ -436,6 +437,15 @@ JSONL 的成功记录，所以它强制：
 
 CLI 在开始模型加载前拒绝意外覆盖已有文件。只有显式 `--overwrite` 才允许替换；即便允许覆盖，
 alignment 或序列化中途失败时，旧 canonical 文件仍保持不变。
+
+代码评审进一步区分了“探索性运行”和“官方 G1 Gate”。底层 `run_benchmark()` 仍可在单元测试或
+探索实验中使用较少的 warm-up/repetition，但 CLI 只有同时满足以下条件才会写入 canonical 文件并
+打印 `G1 REFERENCE RUNTIME: PASS`：
+
+- prompt 文件的语义哈希与冻结 workload 完全一致；
+- engine config 与 G1 默认配置完全一致，只使用默认 `cuda` 设备；
+- warm-up 恰好 3 次，正式 repetition 恰好 5 次；
+- 输出恰好 20 条，case/repetition 顺序正确且 agreement 全部为 1.0。
 
 `BenchmarkDependencies` 把 loader、TinyInfer runner、HF runner、timer、record factory、环境身份和
 Git SHA provider 集中注入。CPU unit tests 因此可以精确验证 3 次 warm-up、5 次正式运行、输出

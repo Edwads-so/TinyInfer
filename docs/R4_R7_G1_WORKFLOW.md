@@ -1,9 +1,9 @@
 # TinyInfer R4–R7 + G1 Reference Runtime 工作流
 
-> 版本：v1.0
+> 版本：v1.1
 > 制定日期：2026-07-23
 > 适用范围：Qwen2.5-0.5B 单请求 Hugging Face Reference Runtime
-> 状态：not started
+> 状态：Task 1–7 与本地 Gate 已完成；首轮 CI 通过，等待评审加固提交的最终 CI 与合并
 > 设计规格：`docs/superpowers/specs/2026-07-23-hf-reference-runtime-design.md`
 > 逐步实施计划：`docs/superpowers/plans/2026-07-23-hf-reference-runtime.md`
 
