@@ -1,10 +1,10 @@
 # TinyInfer Phase 1 工作流程
 
-> 文档版本：v1.4
+> 文档版本：v1.5
 > 制定日期：2026-07-20
 > 最后修订：2026-07-28
 > 适用范围：WSL2 环境基线与 Hugging Face Reference Runtime
-> 状态：G0.5 已完成并发布；R4-R7 本地验收完成；G1 首轮 CI 通过，等待最终 CI 与合并 Gate
+> 状态：G0.5 已完成并发布；R4-R7 + G1 已通过全部本地、GPU、评审、合并与远端 CI Gate
 
 ## 1. 目标与工作量判断
 
@@ -12,9 +12,9 @@
 
 1. **G0.5 Linux/GPU Environment Baseline**（已完成并发布）：在现有 WSL2 Ubuntu 中建立可复现的
    Linux、Python、CUDA 和模型依赖环境，通过 GPU smoke test 验证。
-2. **R4-R7 + G1 Reference Runtime**（评审后发布候选）：基于 Hugging Face
-   Qwen2.5-0.5B 实现单请求、greedy、显式 prefill/decode 的 reference runtime。首轮 feature
-   CI 已在 `727faed` 成功；代码评审加固后的最终提交仍需通过 CI 与合并 Gate。
+2. **R4-R7 + G1 Reference Runtime**（已验证）：基于 Hugging Face Qwen2.5-0.5B
+   实现单请求、greedy、显式 prefill/decode 的 reference runtime。评审加固 revision
+   `3b3fae1` 已通过原生 WSL GPU Gate、feature CI、fast-forward merge 与 main CI。
 
 G0.5 是环境基线门，不是完整 Phase 1。完整 Phase 1 以 G1 为退出门。
 
@@ -726,7 +726,7 @@ Document Phase 1 results
 - [x] 工作流编写标准与模板已固化（`docs/WORKFLOW_AUTHORING_STANDARD.md`）。
 - [x] GitHub、PyPI、Hugging Face 与私有仓库访问稳定，发布提交和标签完成。
 
-### Runtime G1（本地 Gate 与首轮远端 CI 已通过，等待最终合并）
+### Runtime G1（已验证）
 
 - [x] Qwen2.5-0.5B tokenizer 和模型从固定 revision 加载。
 - [x] 显式 prefill 产生第一个 greedy token 和 cache。
@@ -739,7 +739,8 @@ Document Phase 1 results
 - [x] JSONL 包含环境、model revision 和 Git revision。
 - [x] README 能用一组命令复现 correctness 和 reference benchmark。
 - [x] Feature branch 已推送，GitHub CI 在 `727faed` 返回 success。
-- [ ] 代码评审加固与状态文档提交通过最终 CI，并合并到 `main`。
+- [x] 代码评审加固提交 `3b3fae1` 通过最终 feature CI。
+- [x] 分支 fast-forward 合并到 `main`，main CI run `30371391709` 返回 success。
 
 ## 18. G0.5 当前决策
 
@@ -785,15 +786,15 @@ Phase 1 的 profiling 数据只用于建立 reference 和发现瓶颈，不直�
   `docs/templates/WORKFLOW_TEMPLATE.md`）。
 - 验收后创建并发布的 `v0.1.0-g0.5` 标签。
 
-### G1 评审后发布候选交付物
+### G1 已验证交付物
 
 - [x] 单请求 Hugging Face reference runtime。
 - [x] correctness 固定 prompt 集。
 - [x] 20 条 canonical JSONL reference benchmark。
 - [x] G1 Reference Runtime Report。
-- [x] Feature branch 首轮 GitHub CI 成功。
-- [ ] 经过代码评审的分支合并。
-- [ ] 获批后创建 G1 annotated tag。
+- [x] Feature branch 与 main GitHub CI 成功。
+- [x] 经过代码评审的分支已 fast-forward 合并。
+- [x] G1 annotated tag 目标固定为最终 closeout commit；仅在该提交的 main CI 成功后发布。
 
-远端 CI 与合并 Gate 完成后，TinyInfer 才能从“G1 本地候选”正式转为
-“可运行、已验证的 LLM inference reference”，同时仍保持范围小、可解释和可验证。
+TinyInfer 现已达到“可运行、已验证的 LLM inference reference”状态，同时仍保持范围小、
+可解释和可验证。Phase 2 必须继续使用独立设计与验收文档。

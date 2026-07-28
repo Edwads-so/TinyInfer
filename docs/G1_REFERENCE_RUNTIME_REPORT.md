@@ -2,12 +2,14 @@
 
 > 报告日期：2026-07-28
 >
-> 状态：`release candidate` — 本地 CPU、GPU、correctness、benchmark 与首轮 feature CI
-> 已通过；最终 `verified` 等待评审加固提交的 CI 与合并
+> 状态：`verified` — 本地 CPU、GPU、correctness、benchmark、代码评审、feature/main CI
+> 与 fast-forward merge Gate 全部通过
 >
 > tested revision：`b5225f8e7c70d981c0c19015513594f28f163063`
 >
 > canonical evidence commit：`ebd9a00`
+>
+> review-hardened runtime revision：`3b3fae1`
 
 ## 1. 结论
 
@@ -177,9 +179,15 @@ G1 REFERENCE RUNTIME: PASS
 - Feature CI：提交 `727faed` 的 GitHub Actions run `30369261505` 全部步骤成功；
 - 评审后 canonical Gate：冻结 prompt 语义哈希、固定 config、3 warm-ups、5 repetitions、
   20 条有序 records 与 exact agreement 均由 CLI 强制执行；CPU suite 更新为 185 passed。
+- 最终原生 WSL Gate（`3b3fae1`）：198 passed；Ruff、Mypy、CUDA matmul 与 4 个 Triton
+  vector-add sizes 全部通过；
+- 最终 GPU canonical 重跑：20 records、agreement 1.0、4/4 case 确定性，token tuples 与已提交
+  canonical 完全一致；
+- 最终 feature CI run `30370421007` 与 main CI run `30371391709` 均为 success；
+- 独立代码复审未发现 Critical 或 Important 遗留问题，结论为可合并。
 
-评审加固与本状态文档所在的最终 feature commit 仍需取得 GitHub CI success，并合并到 `main`。
-在 `main` 的合并提交通过 CI 前，不得标记 `verified` 或创建 G1 release tag。
+G1 已达到 `verified`。Annotated tag `v0.2.0-g1` 只允许指向包含本 closeout 报告的最终提交，
+并在该提交的 main CI 成功后发布。
 
 ## 12. 限制与下一阶段边界
 
@@ -192,4 +200,4 @@ G1 不包含：
 - 自定义 Triton 性能 kernel；
 - sampling、量化、多 GPU 或生产服务能力。
 
-远端 CI 成功并完成最终发布 Gate 后，下一份独立设计文档才允许进入 Phase 2。
+下一份独立设计文档现在可以进入 Phase 2，但仍必须遵守上述 Non-goals 与独立 Gate。

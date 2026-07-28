@@ -10,10 +10,10 @@ efficiency.
 tested revision `05b9160`, including two GPU smoke runs and the full verifier. The release is
 published from the documentation-only release revision identified by tag `v0.1.0-g0.5`.
 
-**G1 Hugging Face Reference Runtime** is a post-review release candidate. CPU, WSL
-GPU/model, token-alignment, and canonical benchmark gates passed on tested revision
-`b5225f8`; 20 canonical records are committed in `docs/results/g1_reference.jsonl`.
-Feature CI passed on `727faed`; review hardening now requires one final CI and merge Gate.
+**G1 Hugging Face Reference Runtime** is verified. CPU, WSL GPU/model, token-alignment,
+canonical benchmark, code-review, feature CI, fast-forward merge, and main CI gates passed.
+The 20 canonical records are committed in `docs/results/g1_reference.jsonl`; the
+review-hardened runtime was revalidated on `3b3fae1`.
 
 The repository currently provides:
 

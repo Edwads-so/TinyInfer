@@ -1,9 +1,9 @@
 # TinyInfer R4–R7 + G1 Reference Runtime 工作流
 
-> 版本：v1.1
+> 版本：v1.2
 > 制定日期：2026-07-23
 > 适用范围：Qwen2.5-0.5B 单请求 Hugging Face Reference Runtime
-> 状态：Task 1–7 与本地 Gate 已完成；首轮 CI 通过，等待评审加固提交的最终 CI 与合并
+> 状态：verified — Task 1–7、G1、代码评审、原生 WSL GPU Gate、feature/main CI 与合并均完成
 > 设计规格：`docs/superpowers/specs/2026-07-23-hf-reference-runtime-design.md`
 > 逐步实施计划：`docs/superpowers/plans/2026-07-23-hf-reference-runtime.md`
 
@@ -312,60 +312,60 @@ python scripts/verify_g0_5.py
 
 ### W0 AC
 
-- [ ] `main == origin/main`，worktree 初始干净。
-- [ ] `python scripts/verify_g0_5.py` 退出码 0。
-- [ ] 当前分支与 worktree 路径严格匹配第 3 节。
+- [x] `main == origin/main`，worktree 初始干净。
+- [x] `python scripts/verify_g0_5.py` 退出码 0。
+- [x] 当前分支与 worktree 路径严格匹配第 3 节。
 
 ### R4.1 AC
 
-- [ ] 三种空值/非法上界均抛 `ValueError`。
-- [ ] 两个 dataclass 为 frozen、slots，修改字段抛异常。
-- [ ] token tuple 含负数或为空时拒绝。
-- [ ] 定向测试和全部 CPU Gate 退出码 0。
+- [x] 三种空值/非法上界均抛 `ValueError`。
+- [x] 两个 dataclass 为 frozen、slots，修改字段抛异常。
+- [x] token tuple 含负数或为空时拒绝。
+- [x] 定向测试和全部 CPU Gate 退出码 0。
 
 ### R4.2 AC
 
-- [ ] tokenizer/model 都收到固定 revision 与 `trust_remote_code=False`。
-- [ ] model dtype 为 BF16、device 为 CUDA、training 为 False、use_cache 为 True。
-- [ ] PAD token 行为可解释且与 EOS ID 一致或保留模型原值。
-- [ ] loader integration test 退出码 0。
+- [x] tokenizer/model 都收到固定 revision 与 `trust_remote_code=False`。
+- [x] model dtype 为 BF16、device 为 CUDA、training 为 False、use_cache 为 True。
+- [x] PAD token 行为可解释且与 EOS ID 一致或保留模型原值。
+- [x] loader integration test 退出码 0。
 
 ### R5 AC
 
-- [ ] Prefill 输入完整 prompt，Cache 长度等于 prompt tokens。
-- [ ] 每轮 decode 输入形状 `[1, 1]`，Cache 长度增加 1。
-- [ ] 生成 N tokens 后 Cache 长度为 `prompt_tokens + N - 1`。
-- [ ] EOS/length 停止原因正确，不分配梯度。
-- [ ] 1/2/8/32 token 真模型 tests 退出码 0。
+- [x] Prefill 输入完整 prompt，Cache 长度等于 prompt tokens。
+- [x] 每轮 decode 输入形状 `[1, 1]`，Cache 长度增加 1。
+- [x] 生成 N tokens 后 Cache 长度为 `prompt_tokens + N - 1`。
+- [x] EOS/length 停止原因正确，不分配梯度。
+- [x] 1/2/8/32 token 真模型 tests 退出码 0。
 
 ### R6 AC
 
-- [ ] prompts JSON 恰有四个唯一 case ID。
-- [ ] long prompt 实测 512–768 tokens。
-- [ ] 四类 prompt 的 token tuple 与 HF 完全相同。
-- [ ] 首个 mismatch index 能被单元测试精确验证。
+- [x] prompts JSON 恰有四个唯一 case ID。
+- [x] long prompt 实测 512–768 tokens。
+- [x] 四类 prompt 的 token tuple 与 HF 完全相同。
+- [x] 首个 mismatch index 能被单元测试精确验证。
 
 ### R7.1 AC
 
-- [ ] Host 与 CUDA 字段不混用，TPOT 分母符合规格。
-- [ ] NaN/Inf/负指标被拒绝。
-- [ ] schema v1 必需字段全集由测试固定。
-- [ ] synchronize 只由 `timer.py` 管理。
+- [x] Host 与 CUDA 字段不混用，TPOT 分母符合规格。
+- [x] NaN/Inf/负指标被拒绝。
+- [x] schema v1 必需字段全集由测试固定。
+- [x] synchronize 只由 `timer.py` 管理。
 
 ### R7.2 AC
 
-- [ ] CLI 默认拒绝覆盖现有输出。
-- [ ] 任一 agreement 小于 1.0 时退出非零并打印失败 case。
-- [ ] 成功文件恰有 20 行，每行是独立 JSON object。
-- [ ] 四个 case 各 5 条，repetition 为 0–4，warmup_runs 恒为 3。
-- [ ] 成功最后一行为 `G1 REFERENCE RUNTIME: PASS`。
+- [x] CLI 默认拒绝覆盖现有输出。
+- [x] 任一 agreement 小于 1.0 时退出非零并打印失败 case。
+- [x] 成功文件恰有 20 行，每行是独立 JSON object。
+- [x] 四个 case 各 5 条，repetition 为 0–4，warmup_runs 恒为 3。
+- [x] 成功最后一行为 `G1 REFERENCE RUNTIME: PASS`。
 
 ### G1 AC
 
-- [ ] 设计规格第 15 节 13 条 Acceptance Criteria 全部逐项有新鲜证据。
-- [ ] GitHub CI 对最终 commit 为 success。
-- [ ] `git status --porcelain` 为空。
-- [ ] 后续 KV/batching/paged/API/Triton 阶段仍标记 `not started`。
+- [x] 设计规格第 15 节 13 条 Acceptance Criteria 全部逐项有新鲜证据。
+- [x] GitHub CI 对最终 implementation commit 为 success。
+- [x] 最终 implementation commit 的 `git status --porcelain` 为空。
+- [x] 后续 KV/batching/paged/API/Triton 阶段仍标记 `not started`。
 
 ## 9. Gate / Exit Criteria
 

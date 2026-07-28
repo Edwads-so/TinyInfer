@@ -46,10 +46,9 @@ vLLM 类运行时。
 | Task 5 | Host/CUDA 分阶段计时和显存峰值观测 | `815af33` |
 | Task 6 | token agreement 与 benchmark schema-v1 | `84d8572` |
 | Task 7 | benchmark CLI 与 20 条正式记录 | `b5225f8` / `ebd9a00` |
-| Task 8 | G1 报告与发布 Gate | 首轮远端 CI 通过；评审加固完成，等待最终 CI 与合并 |
+| Task 8 | G1 报告与发布 Gate | 代码评审、最终 GPU Gate、feature/main CI 与合并均完成 |
 
-因此准确状态是：**Task 1–7 与 G1 本地 Gate 已实现；首轮远端 CI 已通过，最终
-`verified` 等待评审修复提交的 CI 与合并。**
+因此准确状态是：**Task 1–8 与全部 G1 Gate 已完成，Phase 1 状态为 `verified`。**
 
 ## 3. 一次文本生成的完整路径
 
