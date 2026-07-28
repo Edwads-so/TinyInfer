@@ -2,11 +2,11 @@
 
 > 面向当前项目代码的解释文档
 >
-> 当前覆盖范围：G0.5 环境基线，以及 Phase 1 Task 1–5
+> 当前覆盖范围：G0.5 环境基线，以及 Phase 1 Task 1–6
 >
 > 当前分支：`agent/hf-runtime-fix`
 >
-> 文档基线提交：`815af33`
+> 文档基线提交：`84d8572`
 
 ## 1. 这个项目现在究竟在做什么
 
@@ -44,10 +44,10 @@ vLLM 类运行时。
 | 修复 | 隔离缺少 GPU 依赖时的 pytest module import | `f1abbbb` |
 | Task 4 | 冻结 workload，并证明四类 prompt token 完全一致 | `fe5ccdc` |
 | Task 5 | Host/CUDA 分阶段计时和显存峰值观测 | `815af33` |
-| Task 6 | token agreement 与 benchmark schema-v1 | 下一任务 |
+| Task 6 | token agreement 与 benchmark schema-v1 | `84d8572` |
 | Task 7 | benchmark CLI、20 条正式记录和 G1 报告 | 尚未开始 |
 
-因此准确状态是：**Phase 1 正在进行，Task 1–5 已实现；G1 尚未完成。**
+因此准确状态是：**Phase 1 正在进行，Task 1–6 已实现；G1 尚未完成。**
 
 ## 3. 一次文本生成的完整路径
 
@@ -375,17 +375,46 @@ WSL2 Ubuntu 负责：
 Windows Conda 环境没有安装 pytest/ruff 并不代表项目损坏，只代表调用了不属于本项目的
 解释器。当前可用的 CPU 工具环境是 `reactos`；GPU 验收使用 WSL 项目的 `.venv`。
 
-## 11. Task 6 将增加什么
+## 11. Task 6：把结果变成可审计记录
 
-Task 6 不实现新推理算法，而是把正确性和性能结果变成严格的数据契约：
+Task 6 不实现新推理算法，而是把正确性和性能结果变成了严格的数据契约：
 
 - `compare_token_ids`：计算 token agreement 和首个 mismatch；
 - `TokenComparison`：不可变的比较结果；
 - `BenchmarkRecord`：不可变的 schema-v1 正式记录；
 - `to_dict()`：生成可直接写入 JSONL 的数据。
 
-它的意义是防止 benchmark 只打印一段日志。结构化记录能够被测试、汇总、复查，并在技术报告
-中追溯到模型 SHA、Git SHA、prompt、token 和环境。
+Agreement 的分母使用两侧序列的较长长度：
+
+```text
+agreement = 相同位置且相等的 token 数 / max(actual 长度, reference 长度)
+```
+
+因此长度不一致会自然降低 agreement。如果共同前缀完全相同，但一侧更长，首个 mismatch index
+就是共同长度边界。例如：
+
+```text
+actual:    [3, 5]
+reference: [3, 5, 8]
+
+agreement = 2 / 3
+first_mismatch_index = 2
+```
+
+`TokenComparison` 可以表示一般的成功或失败比较；`BenchmarkRecord` 则只允许进入正式 canonical
+JSONL 的成功记录，所以它强制：
+
+- `token_agreement == 1.0`；
+- `first_mismatch_index is None`；
+- Git revision 是 40 位小写十六进制 SHA；
+- output token 数与 token tuple 长度一致；
+- 所有时间有限且非负；
+- 多 token 请求的 decode host/device 时间大于零；
+- 所有计数器非负；
+- `to_dict()` 的 key 与 schema-v1 完全一致，并把 tuple 转换成 JSON array。
+
+这种区分可以防止失败的对齐结果被误写成正式 benchmark 证据。结构化记录能够被测试、汇总、
+复查，并在技术报告中追溯到模型 SHA、Git SHA、prompt、token 和环境。
 
 ## 12. 建议的学习顺序
 
