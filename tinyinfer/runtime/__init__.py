@@ -6,6 +6,8 @@ from tinyinfer.runtime.generation import (
     PrefillOutput,
     decode_one,
     generate_greedy,
+    generate_with_owned_cache,
+    generate_with_paged_cache,
     prefill,
     reference_generate,
 )
@@ -24,6 +26,8 @@ __all__ = [
     "StopReason",
     "decode_one",
     "generate_greedy",
+    "generate_with_owned_cache",
+    "generate_with_paged_cache",
     "load_reference_model",
     "prefill",
     "reference_generate",

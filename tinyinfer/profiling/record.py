@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from tinyinfer._tokens import validate_token_ids
 from tinyinfer.runtime.result import StopReason
 
 _TIMING_FIELDS = (
@@ -17,14 +18,6 @@ _TIMING_FIELDS = (
     "tpot_device_ms",
     "output_tokens_per_s",
 )
-
-
-def _validate_token_ids(name: str, values: object, *, allow_empty: bool) -> None:
-    if not isinstance(values, tuple) or (not allow_empty and not values):
-        qualifier = "a tuple" if allow_empty else "a non-empty tuple"
-        raise ValueError(f"{name} must be {qualifier}")
-    if any(type(token_id) is not int or token_id < 0 for token_id in values):
-        raise ValueError(f"{name} must contain only non-negative integer tokens")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +49,8 @@ def compare_token_ids(
 ) -> TokenComparison:
     """Compare aligned tokens using the longer sequence as denominator."""
 
-    _validate_token_ids("actual token IDs", actual, allow_empty=True)
-    _validate_token_ids("reference token IDs", reference, allow_empty=True)
+    validate_token_ids("actual token IDs", actual, allow_empty=True)
+    validate_token_ids("reference token IDs", reference, allow_empty=True)
     denominator = max(len(actual), len(reference))
     if denominator == 0:
         raise ValueError("cannot compare two empty token sequences")
@@ -140,7 +133,7 @@ class BenchmarkRecord:
             if type(value) is not int or value < 0:
                 raise ValueError(f"{field_name} must be a non-negative integer")
 
-        _validate_token_ids(
+        validate_token_ids(
             "output_token_ids",
             self.output_token_ids,
             allow_empty=False,

@@ -7,7 +7,7 @@ import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 
 class CudaEvent(Protocol):
@@ -33,7 +33,7 @@ class _TorchCudaFacade:
         self._cuda = importlib.import_module("torch").cuda
 
     def event(self) -> CudaEvent:
-        return cast(CudaEvent, self._cuda.Event(enable_timing=True))
+        return self._cuda.Event(enable_timing=True)
 
     def reset_peak_memory_stats(self) -> None:
         self._cuda.reset_peak_memory_stats()

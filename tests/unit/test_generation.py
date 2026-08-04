@@ -110,7 +110,7 @@ class FakeTorch:
 
 @pytest.fixture(autouse=True)
 def fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(generation, "_load_torch", FakeTorch)
+    monkeypatch.setattr(generation, "_get_torch", lambda: FakeTorch())
 
 
 def test_prefill_uses_full_prompt_and_returns_argmax_cache() -> None:

@@ -6,6 +6,11 @@ import importlib
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from tinyinfer.cache.block import BlockTable
+from tinyinfer.cache.contiguous import ContiguousKVCache, allocate_contiguous_cache
+from tinyinfer.cache.paged import PagedKVCache
+from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
+from tinyinfer.cache.tinyinfer_cache import TinyinferCache
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult, StopReason
@@ -67,7 +72,8 @@ class _NoOpGenerationObserver:
 _NO_OP_OBSERVER = _NoOpGenerationObserver()
 
 
-def _load_torch() -> Any:
+def _get_torch() -> Any:
+    """Return the torch module (lazily imported and cached by importlib)."""
     return importlib.import_module("torch")
 
 
@@ -87,6 +93,19 @@ def _select_next_token(logits: Any) -> int:
     return int(logits[:, -1, :].argmax(dim=-1).item())
 
 
+def _model_cache_dimensions(model: Any) -> dict[str, int]:
+    """Extract cache dimensions from an HF model config."""
+    config = model.config
+    return {
+        "num_layers": int(config.num_hidden_layers),
+        "num_kv_heads": int(
+            getattr(config, "num_key_value_heads", config.num_attention_heads)
+        ),
+        "head_dim": int(config.hidden_size // config.num_attention_heads),
+        "max_seq_len": int(getattr(config, "max_position_embeddings", 4096)),
+    }
+
+
 def prefill(model: Any, input_ids: Any, attention_mask: Any) -> PrefillOutput:
     """Run the full prompt once and return the first greedy token."""
 
@@ -95,7 +114,7 @@ def prefill(model: Any, input_ids: Any, attention_mask: Any) -> PrefillOutput:
     prompt_tokens = int(input_ids.shape[1])
     if prompt_tokens < 1 or tuple(attention_mask.shape) != (1, prompt_tokens):
         raise ValueError("prefill attention_mask must match the non-empty prompt")
-    torch = _load_torch()
+    torch = _get_torch()
     with torch.inference_mode():
         outputs = model(
             input_ids=input_ids,
@@ -127,7 +146,7 @@ def decode_one(
     old_cache_length = _cache_length(cache)
     if tuple(attention_mask.shape) != (1, old_cache_length):
         raise RuntimeError("attention mask length must equal cache length before decode")
-    torch = _load_torch()
+    torch = _get_torch()
     input_ids = torch.tensor(
         [[last_token_id]],
         device=attention_mask.device,
@@ -238,7 +257,7 @@ def reference_generate(
     input_ids = encoded["input_ids"].to(loaded.model.device)
     attention_mask = encoded["attention_mask"].to(loaded.model.device)
     prompt_tokens = int(input_ids.shape[1])
-    torch = _load_torch()
+    torch = _get_torch()
     with torch.inference_mode():
         generated = loaded.model.generate(
             input_ids=input_ids,
@@ -254,3 +273,238 @@ def reference_generate(
     if not suffix:
         raise RuntimeError("Hugging Face reference returned no generated tokens")
     return suffix
+
+
+# ---------------------------------------------------------------------------
+# TinyInfer-owned cache generation (Phase 1.5 — contiguous)
+# ---------------------------------------------------------------------------
+
+
+def generate_with_owned_cache(
+    loaded: LoadedModel,
+    request: GenerationRequest,
+    observer: GenerationObserver | None = None,
+) -> GenerationResult:
+    """Generate with TinyInfer-owned contiguous KV cache — no DynamicCache rebuild.
+
+    A ``TinyinferCache`` is passed as ``past_key_values`` directly into the HF
+    forward.  HF attention layers call ``update()`` / ``__getitem__()`` on it,
+    which read from and write to the TinyInfer ContiguousKVCache buffer.
+    """
+    active_observer = observer if observer is not None else _NO_OP_OBSERVER
+    active_observer.request_started()
+
+    encoded = loaded.tokenizer(
+        request.prompt,
+        return_tensors="pt",
+        add_special_tokens=True,
+    )
+    input_ids = encoded["input_ids"].to(loaded.model.device)
+    attention_mask = encoded["attention_mask"].to(loaded.model.device)
+    prompt_token_ids = tuple(int(token_id) for token_id in input_ids[0].tolist())
+    torch = _get_torch()
+    dims = _model_cache_dimensions(loaded.model)
+
+    active_observer.prefill_started()
+
+    contiguous = allocate_contiguous_cache(
+        num_layers=dims["num_layers"],
+        num_kv_heads=dims["num_kv_heads"],
+        max_seq_len=dims["max_seq_len"],
+        head_dim=dims["head_dim"],
+        device=loaded.model.device,
+        dtype=torch.bfloat16,
+    )
+    tinfer_cache = TinyinferCache(contiguous)
+
+    with torch.inference_mode():
+        outputs = loaded.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=tinfer_cache,
+            use_cache=True,
+            return_dict=True,
+        )
+    first_token_id = _select_next_token(outputs.logits)
+    output_token_ids = [first_token_id]
+    active_observer.prefill_finished()
+    active_observer.first_token_ready()
+
+    active_observer.decode_started()
+    while (
+        output_token_ids[-1] != loaded.eos_token_id
+        and len(output_token_ids) < request.max_new_tokens
+    ):
+        last_token = output_token_ids[-1]
+        old_length = contiguous.length
+
+        input_ids_step = torch.tensor(
+            [[last_token]],
+            device=loaded.model.device,
+            dtype=torch.long,
+        )
+        extended_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    (1, 1),
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
+        cache_position = torch.arange(
+            old_length,
+            old_length + 1,
+            device=loaded.model.device,
+        )
+        with torch.inference_mode():
+            decode_outputs = loaded.model(
+                input_ids=input_ids_step,
+                attention_mask=extended_mask,
+                past_key_values=tinfer_cache,
+                cache_position=cache_position,
+                use_cache=True,
+                return_dict=True,
+            )
+        next_token_id = _select_next_token(decode_outputs.logits)
+        output_token_ids.append(next_token_id)
+        attention_mask = extended_mask
+
+    active_observer.decode_finished(len(output_token_ids))
+    stop_reason: StopReason = (
+        "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
+    )
+    text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
+    result = GenerationResult(
+        request_id=request.request_id,
+        prompt_token_ids=prompt_token_ids,
+        output_token_ids=tuple(output_token_ids),
+        text=text,
+        stop_reason=stop_reason,
+    )
+    active_observer.request_finished()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Paged KV cache generation (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def generate_with_paged_cache(
+    loaded: LoadedModel,
+    request: GenerationRequest,
+    observer: GenerationObserver | None = None,
+) -> GenerationResult:
+    """Generate with TinyInfer paged KV cache — block-level allocation.
+
+    A ``PagedTinyinferCache`` is passed as ``past_key_values``.  HF attention
+    reads/writes through the paged block table into the physical block pool.
+    """
+    active_observer = observer if observer is not None else _NO_OP_OBSERVER
+    active_observer.request_started()
+
+    encoded = loaded.tokenizer(
+        request.prompt,
+        return_tensors="pt",
+        add_special_tokens=True,
+    )
+    input_ids = encoded["input_ids"].to(loaded.model.device)
+    attention_mask = encoded["attention_mask"].to(loaded.model.device)
+    prompt_token_ids = tuple(int(token_id) for token_id in input_ids[0].tolist())
+    torch = _get_torch()
+    dims = _model_cache_dimensions(loaded.model)
+
+    active_observer.prefill_started()
+
+    block_size = 16
+    max_tokens = dims["max_seq_len"]
+    num_physical = (max_tokens + block_size - 1) // block_size
+
+    paged = PagedKVCache(
+        num_layers=dims["num_layers"],
+        num_kv_heads=dims["num_kv_heads"],
+        block_size=block_size,
+        head_dim=dims["head_dim"],
+        num_physical_blocks=num_physical,
+        device=loaded.model.device,
+        dtype=torch.bfloat16,
+    )
+    block_table = paged.create_block_table(max_tokens)
+    prompt_len = int(input_ids.shape[1])
+    total_blocks = (prompt_len + request.max_new_tokens + block_size - 1) // block_size
+    paged.allocate_blocks(block_table, total_blocks)
+
+    tinfer_cache = PagedTinyinferCache(paged, block_table)
+
+    with torch.inference_mode():
+        outputs = loaded.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=tinfer_cache,
+            use_cache=True,
+            return_dict=True,
+        )
+    first_token_id = _select_next_token(outputs.logits)
+    output_token_ids = [first_token_id]
+    active_observer.prefill_finished()
+    active_observer.first_token_ready()
+
+    active_observer.decode_started()
+    while (
+        output_token_ids[-1] != loaded.eos_token_id
+        and len(output_token_ids) < request.max_new_tokens
+    ):
+        last_token = output_token_ids[-1]
+        old_length = tinfer_cache.length
+
+        input_ids_step = torch.tensor(
+            [[last_token]],
+            device=loaded.model.device,
+            dtype=torch.long,
+        )
+        extended_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    (1, 1),
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
+        cache_position = torch.arange(
+            old_length,
+            old_length + 1,
+            device=loaded.model.device,
+        )
+        with torch.inference_mode():
+            decode_outputs = loaded.model(
+                input_ids=input_ids_step,
+                attention_mask=extended_mask,
+                past_key_values=tinfer_cache,
+                cache_position=cache_position,
+                use_cache=True,
+                return_dict=True,
+            )
+        next_token_id = _select_next_token(decode_outputs.logits)
+        output_token_ids.append(next_token_id)
+        attention_mask = extended_mask
+
+    active_observer.decode_finished(len(output_token_ids))
+    stop_reason: StopReason = (
+        "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
+    )
+    text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
+    result = GenerationResult(
+        request_id=request.request_id,
+        prompt_token_ids=prompt_token_ids,
+        output_token_ids=tuple(output_token_ids),
+        text=text,
+        stop_reason=stop_reason,
+    )
+    active_observer.request_finished()
+    return result

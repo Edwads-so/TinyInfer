@@ -7,7 +7,7 @@ import tinyinfer
 
 
 def test_package_exposes_version() -> None:
-    assert tinyinfer.__version__ == "0.1.0"
+    assert tinyinfer.__version__ == "0.2.0"
 
 
 def test_module_entrypoint_runs() -> None:
@@ -18,4 +18,4 @@ def test_module_entrypoint_runs() -> None:
         text=True,
     )
     assert result.returncode == 0
-    assert "TinyInfer 0.1.0" in result.stdout
+    assert "TinyInfer 0.2.0" in result.stdout
