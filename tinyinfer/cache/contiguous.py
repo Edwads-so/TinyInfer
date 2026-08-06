@@ -80,6 +80,10 @@ class ContiguousKVCache:
         """Append one decode-step KV for a single layer.
 
         ``key`` / ``value`` shapes: ``[1, num_kv_heads, 1, head_dim]``
+
+        Does NOT increment ``length`` — the caller (TinyinferCache) is
+        responsible for advancing the sequence cursor once after all
+        layers have been written.
         """
         if key.shape[2] != 1 or value.shape[2] != 1:
             raise ValueError("decode key/value must have exactly one token")
@@ -90,16 +94,20 @@ class ContiguousKVCache:
             )
         self.buffer[layer_idx, 0, :, pos, :].copy_(key[0, :, 0, :])
         self.buffer[layer_idx, 1, :, pos, :].copy_(value[0, :, 0, :])
-        object.__setattr__(self, "length", pos + 1)
 
-    def read(self, layer_idx: int) -> tuple[Any, Any]:
-        """Return (key, value) tensors for the full cached sequence.
+    def advance_length(self) -> None:
+        """Increment length by one after all layers have written a decode step."""
+        object.__setattr__(self, "length", self.length + 1)
 
-        Shapes: ``[1, num_kv_heads, length, head_dim]``
+    def read(self, layer_idx: int, *, tokens: int | None = None) -> tuple[Any, Any]:
+        """Return (key, value) tensors for the cached sequence.
+
+        Shapes: ``[1, num_kv_heads, tokens, head_dim]``
         """
+        n = tokens if tokens is not None else self.length
         return (
-            self.buffer[layer_idx, 0, :, : self.length, :].unsqueeze(0),
-            self.buffer[layer_idx, 1, :, : self.length, :].unsqueeze(0),
+            self.buffer[layer_idx, 0, :, :n, :].unsqueeze(0),
+            self.buffer[layer_idx, 1, :, :n, :].unsqueeze(0),
         )
 
 

@@ -40,20 +40,24 @@ class TinyinferCache:
     ) -> tuple[Any, Any]:
         """Called by HF attention after computing K/V for this layer.
 
-        Returns the *full* cached key and value for this layer so the
-        attention module can use them in the forward pass.
+        Returns the *full* cached key and value for this layer.
         """
         if not self._has_seen_prefill:
-            # Prefill: write the complete prompt KV.
             self._contiguous.write_prefill(key_states, value_states, layer_idx)
             if layer_idx == self._contiguous.num_layers - 1:
                 self._has_seen_prefill = True
+            full_key, full_value = self._contiguous.read(layer_idx)
         else:
-            # Decode: append one token.
             self._contiguous.write_decode(key_states, value_states, layer_idx)
+            # During decode, all layers must see the same length = old_length + 1
+            # so the causal mask is consistent.  Only the last layer commits
+            # the increment.
+            full_key, full_value = self._contiguous.read(
+                layer_idx, tokens=self._contiguous.length + 1
+            )
+            if layer_idx == self._contiguous.num_layers - 1:
+                self._contiguous.advance_length()
 
-        full_key, full_value = self._contiguous.read(layer_idx)
-        # Keep key_cache / value_cache in sync for code paths that access them.
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(full_key)
             self.value_cache.append(full_value)
@@ -69,6 +73,18 @@ class TinyinferCache:
     def get_seq_length(self) -> int:
         """Return the number of tokens currently cached."""
         return self._contiguous.length
+
+    def get_query_offset(self, _layer_idx: int = 0) -> int:
+        """Return the query offset for causal mask creation (Transformers 5.x+)."""
+        return 0
+
+    def get_mask_sizes(self, q_length: int, _layer_idx: int = 0) -> tuple[int, int]:
+        """Return (kv_length + q_length, 0) for mask sizing (Transformers 5.x+).
+
+        The first element is the total sequence length (cached KV + new query
+        tokens) used to create the causal mask.
+        """
+        return (self._contiguous.length + q_length, 0)
 
     # ------------------------------------------------------------------
     # Convenience

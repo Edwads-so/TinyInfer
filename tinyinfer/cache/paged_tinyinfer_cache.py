@@ -40,6 +40,11 @@ class PagedTinyinferCache:
             self._paged.write_prefill(
                 key_states, value_states, layer_idx, self._block_table, prompt_len
             )
+            # All layers read with prompt_len, but only the last one
+            # commits it.
+            full_key, full_value = self._paged.read(
+                layer_idx, self._block_table, prompt_len
+            )
             if layer_idx == self._paged.num_layers - 1:
                 self._has_seen_prefill = True
                 self._length = prompt_len
@@ -47,12 +52,12 @@ class PagedTinyinferCache:
             self._paged.write_decode(
                 key_states, value_states, layer_idx, self._block_table, self._length
             )
+            full_key, full_value = self._paged.read(
+                layer_idx, self._block_table, self._length + 1
+            )
             if layer_idx == self._paged.num_layers - 1:
                 self._length += 1
 
-        full_key, full_value = self._paged.read(
-            layer_idx, self._block_table, self._length
-        )
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(full_key)
             self.value_cache.append(full_value)
@@ -68,6 +73,14 @@ class PagedTinyinferCache:
     def get_seq_length(self) -> int:
         """Return the number of tokens currently cached."""
         return self._length
+
+    def get_query_offset(self, _layer_idx: int = 0) -> int:
+        """Return the query offset for causal mask creation (Transformers 5.x+)."""
+        return 0
+
+    def get_mask_sizes(self, q_length: int, _layer_idx: int = 0) -> tuple[int, int]:
+        """Return (kv_length + q_length, 0) for mask sizing (Transformers 5.x+)."""
+        return (self._length + q_length, 0)
 
     # ------------------------------------------------------------------
     # Convenience
