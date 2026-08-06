@@ -1,4 +1,4 @@
-"""FCFS RequestQueue with waiting/running/finished states."""
+"""FCFS RequestQueue with waiting/running/finished/cancelled states."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any, Literal
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
 
-RequestState = Literal["waiting", "running", "finished"]
+RequestState = Literal["waiting", "running", "finished", "cancelled"]
 
 
 @dataclass
@@ -68,6 +68,19 @@ class RequestQueue:
                 admitted.append(entry.request)
         return admitted
 
+    def cancel(self, request_id: str) -> None:
+        """Transition a waiting/running request to cancelled.
+
+        Already finished or cancelled requests are left unchanged.
+        """
+        for entry in self._entries:
+            if entry.request.request_id == request_id:
+                if entry.state in {"finished", "cancelled"}:
+                    return  # no-op: already terminal
+                entry.state = "cancelled"
+                return
+        raise KeyError(f"no request with id {request_id!r}")
+
     def mark_finished(self, request_id: str, result: GenerationResult) -> None:
         """Transition a running request to finished."""
         for entry in self._entries:
@@ -92,6 +105,10 @@ class RequestQueue:
     @property
     def finished_count(self) -> int:
         return sum(1 for entry in self._entries if entry.state == "finished")
+
+    @property
+    def cancelled_count(self) -> int:
+        return sum(1 for entry in self._entries if entry.state == "cancelled")
 
     def snapshot(self) -> BatchResult:
         """Return a point-in-time summary of the queue."""

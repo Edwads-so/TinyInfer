@@ -86,7 +86,7 @@ class PagedKVCache:
         return self._device
 
     @property
-    def free_blocks(self) -> int:
+    def free_block_count(self) -> int:
         return self._allocator.free_count
 
     # -- block table ------------------------------------------------------

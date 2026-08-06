@@ -113,6 +113,53 @@ class TestRequestQueue:
         assert running[0].request_id == "a"
 
 
+class TestCancel:
+    """RequestQueue.cancel() state transition tests."""
+
+    def test_cancel_waiting_request(self) -> None:
+        q = RequestQueue()
+        q.enqueue(make_request("a"))
+        assert q.waiting_count == 1
+
+        q.cancel("a")
+        assert q.cancelled_count == 1
+        assert q.waiting_count == 0
+        assert q.all_done()  # cancelled counts as done
+
+    def test_cancel_running_request(self) -> None:
+        q = RequestQueue()
+        q.enqueue(make_request("a"))
+        q.admit(max_batch=1)
+        assert q.running_count == 1
+
+        q.cancel("a")
+        assert q.cancelled_count == 1
+        assert q.running_count == 0
+
+    def test_cancel_finished_request_is_noop(self) -> None:
+        q = RequestQueue()
+        q.enqueue(make_request("a"))
+        q.admit(max_batch=1)
+        q.mark_finished("a", make_result("a"))
+
+        q.cancel("a")  # should not raise
+        assert q.finished_count == 1
+        assert q.cancelled_count == 0
+
+    def test_cancel_cancelled_request_is_noop(self) -> None:
+        q = RequestQueue()
+        q.enqueue(make_request("a"))
+        q.cancel("a")
+
+        q.cancel("a")  # should not raise
+        assert q.cancelled_count == 1
+
+    def test_cancel_unknown_raises_keyerror(self) -> None:
+        q = RequestQueue()
+        with pytest.raises(KeyError):
+            q.cancel("nonexistent")
+
+
 class TestBatchResult:
     def test_defaults(self) -> None:
         br = BatchResult()

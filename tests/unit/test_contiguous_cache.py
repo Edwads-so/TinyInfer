@@ -221,6 +221,10 @@ def test_write_decode_increments_length(monkeypatch: pytest.MonkeyPatch) -> None
     key_decode = SimpleTensor(1, 2, 1, 4)
     value_decode = SimpleTensor(1, 2, 1, 4)
     cache.write_decode(key_decode, value_decode, layer_idx=0)
+    # write_decode writes the token but does NOT advance length itself —
+    # the caller (TinyinferCache) advances after the final layer.
+    assert cache.length == 3
+    cache.advance_length()
     assert cache.length == 4
 
 
