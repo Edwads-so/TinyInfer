@@ -42,9 +42,7 @@ class PagedTinyinferCache:
             )
             # All layers read with prompt_len, but only the last one
             # commits it.
-            full_key, full_value = self._paged.read(
-                layer_idx, self._block_table, prompt_len
-            )
+            full_key, full_value = self._paged.read(layer_idx, self._block_table, prompt_len)
             if layer_idx == self._paged.num_layers - 1:
                 self._has_seen_prefill = True
                 self._length = prompt_len
@@ -52,9 +50,7 @@ class PagedTinyinferCache:
             self._paged.write_decode(
                 key_states, value_states, layer_idx, self._block_table, self._length
             )
-            full_key, full_value = self._paged.read(
-                layer_idx, self._block_table, self._length + 1
-            )
+            full_key, full_value = self._paged.read(layer_idx, self._block_table, self._length + 1)
             if layer_idx == self._paged.num_layers - 1:
                 self._length += 1
 

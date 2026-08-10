@@ -96,9 +96,7 @@ class PagedKVCache:
         max_logical = (max_tokens + self._block_size - 1) // self._block_size
         return BlockTable(self._num_layers, max_logical)
 
-    def allocate_blocks(
-        self, block_table: BlockTable, num_blocks: int
-    ) -> list[int]:
+    def allocate_blocks(self, block_table: BlockTable, num_blocks: int) -> list[int]:
         """Allocate *num_blocks* physical blocks and map them."""
         physical: list[int] = []
         for _ in range(num_blocks):
@@ -180,8 +178,12 @@ class PagedKVCache:
         """
         torch = importlib.import_module("torch")
         key_out = torch.empty(
-            1, self._num_kv_heads, tokens, self._head_dim,
-            device=self._device, dtype=self._dtype,
+            1,
+            self._num_kv_heads,
+            tokens,
+            self._head_dim,
+            device=self._device,
+            dtype=self._dtype,
         )
         value_out = torch.empty_like(key_out)
         blocks_needed = (tokens + self._block_size - 1) // self._block_size

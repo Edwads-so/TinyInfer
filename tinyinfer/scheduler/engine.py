@@ -107,9 +107,7 @@ class BatchEngine:
     def _prefill_request(self, req_id: str) -> None:
         req = self._requests[req_id]
         state = self._states[req_id]
-        encoded = self._loaded.tokenizer(
-            req.prompt, return_tensors="pt", add_special_tokens=True
-        )
+        encoded = self._loaded.tokenizer(req.prompt, return_tensors="pt", add_special_tokens=True)
         input_ids = encoded["input_ids"].to(self._loaded.model.device)
         attention_mask = encoded["attention_mask"].to(self._loaded.model.device)
 
@@ -170,12 +168,8 @@ class BatchEngine:
         req = self._requests[req_id]
         state = self._states[req_id]
         tokens = state["output_token_ids"]
-        stop_reason: StopReason = (
-            "eos" if tokens[-1] == self._loaded.eos_token_id else "length"
-        )
-        encoded = self._loaded.tokenizer(
-            req.prompt, return_tensors="pt", add_special_tokens=True
-        )
+        stop_reason: StopReason = "eos" if tokens[-1] == self._loaded.eos_token_id else "length"
+        encoded = self._loaded.tokenizer(req.prompt, return_tensors="pt", add_special_tokens=True)
         prompt_ids = tuple(int(t) for t in encoded["input_ids"][0].tolist())
         text = self._loaded.tokenizer.decode(tokens, skip_special_tokens=True)
         return GenerationResult(

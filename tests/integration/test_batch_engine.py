@@ -18,11 +18,11 @@ pytest.importorskip("transformers")
 import torch
 
 from tinyinfer.cache.paged import PagedKVCache
+from tinyinfer.config import EngineConfig
+from tinyinfer.runtime.generation import reference_generate
 from tinyinfer.runtime.hf_loader import LoadedModel, load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
-from tinyinfer.runtime.generation import reference_generate
 from tinyinfer.scheduler.engine import BatchEngine
-from tinyinfer.config import EngineConfig
 
 pytestmark = [pytest.mark.gpu, pytest.mark.model]
 
@@ -63,18 +63,13 @@ def _make_paged_cache(loaded: LoadedModel) -> PagedKVCache:
 
 
 def _build_requests() -> list[GenerationRequest]:
-    return [
-        GenerationRequest(f"req-{i}", prompt, 16)
-        for i, prompt in enumerate(REQUEST_PROMPTS)
-    ]
+    return [GenerationRequest(f"req-{i}", prompt, 16) for i, prompt in enumerate(REQUEST_PROMPTS)]
 
 
 class TestBatchTokenAlignment:
     """BatchEngine outputs must match HF model.generate() token-for-token."""
 
-    def test_batch_outputs_match_hf_reference(
-        self, loaded_model: LoadedModel
-    ) -> None:
+    def test_batch_outputs_match_hf_reference(self, loaded_model: LoadedModel) -> None:
         requests = _build_requests()
         paged = _make_paged_cache(loaded_model)
         engine = BatchEngine(loaded_model, paged, max_batch=8)
@@ -85,20 +80,17 @@ class TestBatchTokenAlignment:
         results = engine.run()
         assert len(results) == len(requests)
 
-        for req, result in zip(requests, results):
+        for req, result in zip(requests, results, strict=True):
             reference = reference_generate(loaded_model, req)
             assert result.output_token_ids == reference, (
-                f"{req.request_id} mismatch: batch={result.output_token_ids}, "
-                f"ref={reference}"
+                f"{req.request_id} mismatch: batch={result.output_token_ids}, ref={reference}"
             )
 
 
 class TestBatchMemoryStability:
     """Peak memory must not grow across repeated engine runs."""
 
-    def test_repeated_runs_do_not_accumulate_memory(
-        self, loaded_model: LoadedModel
-    ) -> None:
+    def test_repeated_runs_do_not_accumulate_memory(self, loaded_model: LoadedModel) -> None:
         requests = _build_requests()
         paged = _make_paged_cache(loaded_model)
 
@@ -114,6 +106,4 @@ class TestBatchMemoryStability:
         # Peak memory must be stable (allow 8% jitter for allocator noise).
         assert peaks[0] > 0
         for peak in peaks[1:]:
-            assert peak <= peaks[0] * 1.08, (
-                f"peak memory grew across runs: {peaks}"
-            )
+            assert peak <= peaks[0] * 1.08, f"peak memory grew across runs: {peaks}"

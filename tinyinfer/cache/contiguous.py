@@ -64,9 +64,7 @@ class ContiguousKVCache:
         if prompt_len < 1:
             raise ValueError("prefill key must have at least one token")
         if prompt_len > self.max_seq_len:
-            raise ValueError(
-                f"prefill length {prompt_len} exceeds max_seq_len {self.max_seq_len}"
-            )
+            raise ValueError(f"prefill length {prompt_len} exceeds max_seq_len {self.max_seq_len}")
         self.buffer[layer_idx, 0, :, :prompt_len, :].copy_(key[0])
         self.buffer[layer_idx, 1, :, :prompt_len, :].copy_(value[0])
         object.__setattr__(self, "length", prompt_len)
@@ -89,9 +87,7 @@ class ContiguousKVCache:
             raise ValueError("decode key/value must have exactly one token")
         pos = self.length
         if pos >= self.max_seq_len:
-            raise ValueError(
-                f"cache length {pos} already at max_seq_len {self.max_seq_len}"
-            )
+            raise ValueError(f"cache length {pos} already at max_seq_len {self.max_seq_len}")
         self.buffer[layer_idx, 0, :, pos, :].copy_(key[0, :, 0, :])
         self.buffer[layer_idx, 1, :, pos, :].copy_(value[0, :, 0, :])
 

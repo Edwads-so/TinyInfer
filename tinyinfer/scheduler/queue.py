@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
@@ -113,7 +113,11 @@ class RequestQueue:
     def snapshot(self) -> BatchResult:
         """Return a point-in-time summary of the queue."""
         return BatchResult(
-            finished=[entry.result for entry in self._entries if entry.state == "finished" and entry.result is not None],
+            finished=[
+                entry.result
+                for entry in self._entries
+                if entry.state == "finished" and entry.result is not None
+            ],
             running_count=self.running_count,
             waiting_count=self.waiting_count,
         )

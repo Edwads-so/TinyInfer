@@ -6,8 +6,7 @@ import importlib
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from tinyinfer.cache.block import BlockTable
-from tinyinfer.cache.contiguous import ContiguousKVCache, allocate_contiguous_cache
+from tinyinfer.cache.contiguous import allocate_contiguous_cache
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
 from tinyinfer.cache.tinyinfer_cache import TinyinferCache
@@ -98,9 +97,7 @@ def _model_cache_dimensions(model: Any) -> dict[str, int]:
     config = model.config
     return {
         "num_layers": int(config.num_hidden_layers),
-        "num_kv_heads": int(
-            getattr(config, "num_key_value_heads", config.num_attention_heads)
-        ),
+        "num_kv_heads": int(getattr(config, "num_key_value_heads", config.num_attention_heads)),
         "head_dim": int(config.hidden_size // config.num_attention_heads),
         "max_seq_len": int(getattr(config, "max_position_embeddings", 4096)),
     }
@@ -373,9 +370,7 @@ def generate_with_owned_cache(
         attention_mask = extended_mask
 
     active_observer.decode_finished(len(output_token_ids))
-    stop_reason: StopReason = (
-        "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
-    )
+    stop_reason: StopReason = "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
     text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
     result = GenerationResult(
         request_id=request.request_id,
@@ -495,9 +490,7 @@ def generate_with_paged_cache(
         attention_mask = extended_mask
 
     active_observer.decode_finished(len(output_token_ids))
-    stop_reason: StopReason = (
-        "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
-    )
+    stop_reason: StopReason = "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
     text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
     result = GenerationResult(
         request_id=request.request_id,

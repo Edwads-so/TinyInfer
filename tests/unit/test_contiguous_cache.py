@@ -8,7 +8,7 @@ import pytest
 
 
 class SimpleTensor:
-    """Minimal tensor stand-in that supports shape, device, dtype, __getitem__, copy_, and unsqueeze."""
+    """Minimal tensor stand-in supporting shape, device, dtype, getitem, copy_, unsqueeze."""
 
     def __init__(self, *shape: int, device: str = "cpu", dtype: str = "bfloat16") -> None:
         self._shape = shape

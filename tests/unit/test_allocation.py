@@ -26,9 +26,7 @@ class TestBlockAllocatorInvariants:
             if rng.random() < 0.6 and allocator.free_count > 0:
                 # allocate
                 block = allocator.allocate()
-                assert block not in allocated, (
-                    f"double allocation of block {block} at seed {seed}"
-                )
+                assert block not in allocated, f"double allocation of block {block} at seed {seed}"
                 allocated.add(block)
             else:
                 # free an existing block
@@ -37,9 +35,7 @@ class TestBlockAllocatorInvariants:
                     allocator.free(block)
 
             # Invariant: no leaks, no lost blocks
-            assert (
-                allocator.free_count + len(allocated)
-            ) == total, (
+            assert (allocator.free_count + len(allocated)) == total, (
                 f"leak/double: free={allocator.free_count}, "
                 f"used={len(allocated)}, total={total} (seed {seed})"
             )
@@ -109,10 +105,7 @@ class TestPagedKVCacheAllocationBalance:
         # the real torch import but on CPU with tiny dims.  This only checks
         # allocator bookkeeping, not tensor data (uses torch.zeros which is
         # available even on CPU-only environments).
-        try:
-            import torch  # noqa: F401
-        except ImportError:
-            pytest.skip("torch not available")
+        torch = pytest.importorskip("torch")
 
         paged = PagedKVCache(
             num_layers=2,
@@ -121,7 +114,7 @@ class TestPagedKVCacheAllocationBalance:
             head_dim=8,
             num_physical_blocks=32,
             device="cpu",
-            dtype="bfloat16",
+            dtype=torch.bfloat16,
         )
         assert paged.free_block_count == 32
 
@@ -154,10 +147,7 @@ class TestPagedKVCacheAllocationBalance:
     def test_chained_requests_do_not_accumulate_allocations(self) -> None:
         from tinyinfer.cache.paged import PagedKVCache
 
-        try:
-            import torch  # noqa: F401
-        except ImportError:
-            pytest.skip("torch not available")
+        torch = pytest.importorskip("torch")
 
         paged = PagedKVCache(
             num_layers=1,
@@ -166,7 +156,7 @@ class TestPagedKVCacheAllocationBalance:
             head_dim=4,
             num_physical_blocks=16,
             device="cpu",
-            dtype="bfloat16",
+            dtype=torch.bfloat16,
         )
 
         for _ in range(50):
