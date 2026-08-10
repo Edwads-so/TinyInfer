@@ -7,6 +7,7 @@ from typing import Any
 
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
+from tinyinfer.cache.request_state import PagedRequestState
 from tinyinfer.runtime.generation import _select_next_token
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
@@ -96,10 +97,17 @@ class BatchEngine:
         block_table = self._paged.create_block_table(max_tokens)
         blocks_needed = block_table.logical_blocks_used(max_tokens, self._paged.block_size)
         self._paged.allocate_blocks(block_table, blocks_needed)
+        paged_state = PagedRequestState(
+            request_id=req_id,
+            block_table=block_table,
+            seq_length=0,
+            blocks_allocated=blocks_needed,
+        )
         self._states[req_id] = {
             "block_table": block_table,
             "blocks_allocated": blocks_needed,
-            "tinfer_cache": PagedTinyinferCache(self._paged, block_table),
+            "paged_state": paged_state,
+            "tinfer_cache": PagedTinyinferCache(self._paged, paged_state),
             "attention_mask": None,
             "output_token_ids": [],
         }

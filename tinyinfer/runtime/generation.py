@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from tinyinfer.cache.contiguous import allocate_contiguous_cache
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
+from tinyinfer.cache.request_state import PagedRequestState
 from tinyinfer.cache.tinyinfer_cache import TinyinferCache
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
@@ -432,72 +433,81 @@ def generate_with_paged_cache(
     total_blocks = (prompt_len + request.max_new_tokens + block_size - 1) // block_size
     paged.allocate_blocks(block_table, total_blocks)
 
-    tinfer_cache = PagedTinyinferCache(paged, block_table)
+    state = PagedRequestState(
+        request_id=request.request_id,
+        block_table=block_table,
+        seq_length=0,
+        blocks_allocated=total_blocks,
+    )
+    tinfer_cache = PagedTinyinferCache(paged, state)
 
-    with torch.inference_mode():
-        outputs = loaded.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            past_key_values=tinfer_cache,
-            use_cache=True,
-            return_dict=True,
-        )
-    first_token_id = _select_next_token(outputs.logits)
-    output_token_ids = [first_token_id]
-    active_observer.prefill_finished()
-    active_observer.first_token_ready()
-
-    active_observer.decode_started()
-    while (
-        output_token_ids[-1] != loaded.eos_token_id
-        and len(output_token_ids) < request.max_new_tokens
-    ):
-        last_token = output_token_ids[-1]
-        old_length = tinfer_cache.length
-
-        input_ids_step = torch.tensor(
-            [[last_token]],
-            device=loaded.model.device,
-            dtype=torch.long,
-        )
-        extended_mask = torch.cat(
-            [
-                attention_mask,
-                torch.ones(
-                    (1, 1),
-                    device=attention_mask.device,
-                    dtype=attention_mask.dtype,
-                ),
-            ],
-            dim=1,
-        )
-        cache_position = torch.arange(
-            old_length,
-            old_length + 1,
-            device=loaded.model.device,
-        )
+    try:
         with torch.inference_mode():
-            decode_outputs = loaded.model(
-                input_ids=input_ids_step,
-                attention_mask=extended_mask,
+            outputs = loaded.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
                 past_key_values=tinfer_cache,
-                cache_position=cache_position,
                 use_cache=True,
                 return_dict=True,
             )
-        next_token_id = _select_next_token(decode_outputs.logits)
-        output_token_ids.append(next_token_id)
-        attention_mask = extended_mask
+        first_token_id = _select_next_token(outputs.logits)
+        output_token_ids = [first_token_id]
+        active_observer.prefill_finished()
+        active_observer.first_token_ready()
 
-    active_observer.decode_finished(len(output_token_ids))
-    stop_reason: StopReason = "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
-    text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
-    result = GenerationResult(
-        request_id=request.request_id,
-        prompt_token_ids=prompt_token_ids,
-        output_token_ids=tuple(output_token_ids),
-        text=text,
-        stop_reason=stop_reason,
-    )
-    active_observer.request_finished()
-    return result
+        active_observer.decode_started()
+        while (
+            output_token_ids[-1] != loaded.eos_token_id
+            and len(output_token_ids) < request.max_new_tokens
+        ):
+            last_token = output_token_ids[-1]
+            old_length = tinfer_cache.length
+
+            input_ids_step = torch.tensor(
+                [[last_token]],
+                device=loaded.model.device,
+                dtype=torch.long,
+            )
+            extended_mask = torch.cat(
+                [
+                    attention_mask,
+                    torch.ones(
+                        (1, 1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+            cache_position = torch.arange(
+                old_length,
+                old_length + 1,
+                device=loaded.model.device,
+            )
+            with torch.inference_mode():
+                decode_outputs = loaded.model(
+                    input_ids=input_ids_step,
+                    attention_mask=extended_mask,
+                    past_key_values=tinfer_cache,
+                    cache_position=cache_position,
+                    use_cache=True,
+                    return_dict=True,
+                )
+            next_token_id = _select_next_token(decode_outputs.logits)
+            output_token_ids.append(next_token_id)
+            attention_mask = extended_mask
+
+        active_observer.decode_finished(len(output_token_ids))
+        stop_reason: StopReason = "eos" if output_token_ids[-1] == loaded.eos_token_id else "length"
+        text = loaded.tokenizer.decode(output_token_ids, skip_special_tokens=True)
+        result = GenerationResult(
+            request_id=request.request_id,
+            prompt_token_ids=prompt_token_ids,
+            output_token_ids=tuple(output_token_ids),
+            text=text,
+            stop_reason=stop_reason,
+        )
+        active_observer.request_finished()
+        return result
+    finally:
+        paged.release_request(state)

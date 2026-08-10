@@ -127,6 +127,16 @@ class PagedKVCache:
             raise
         return physical
 
+    def release_request(self, state: Any) -> None:
+        """Release every block held by *state* and mark it released.
+
+        Idempotent: a released state frees nothing on repeat calls.
+        """
+        if state.released:
+            return
+        self.free_blocks(state.block_table, state.blocks_allocated)
+        state.mark_released()
+
     def free_blocks(self, block_table: BlockTable, num_blocks: int) -> None:
         """Free the physical blocks mapped in logical blocks 0..num_blocks-1.
 
