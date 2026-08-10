@@ -97,27 +97,60 @@ class PagedKVCache:
         return BlockTable(self._num_layers, max_logical)
 
     def allocate_blocks(self, block_table: BlockTable, num_blocks: int) -> list[int]:
-        """Allocate *num_blocks* physical blocks and map them."""
+        """Atomically allocate *num_blocks* physical blocks and map them.
+
+        If the pool cannot satisfy the full request, any blocks acquired by
+        this call are returned to the pool and every mapping written by this
+        call is cleared before re-raising.
+        """
+        if num_blocks < 0:
+            raise ValueError("num_blocks must be non-negative")
+        if num_blocks > self._allocator.free_count:
+            raise IndexError(f"need {num_blocks} blocks but only {self._allocator.free_count} free")
         physical: list[int] = []
-        for _ in range(num_blocks):
-            p = self._allocator.allocate()
-            physical.append(p)
+        try:
+            for _ in range(num_blocks):
+                p = self._allocator.allocate()
+                physical.append(p)
+                for layer in range(self._num_layers):
+                    block_table.set(layer, len(physical) - 1, p)
+        except Exception:
+            # Roll back any blocks acquired so far and clear this call's mappings.
+            import contextlib
+
+            for p in physical:
+                with contextlib.suppress(ValueError):
+                    self._allocator.free(p)
             for layer in range(self._num_layers):
-                block_table.set(layer, len(physical) - 1, p)
+                for logical in range(len(physical)):
+                    block_table.clear(layer, logical)
+            raise
         return physical
 
     def free_blocks(self, block_table: BlockTable, num_blocks: int) -> None:
-        """Free the physical blocks for logical blocks 0..num_blocks-1 per layer."""
+        """Free the physical blocks mapped in logical blocks 0..num_blocks-1.
+
+        Each mapped physical block is freed once and its mapping cleared.  A
+        repeated pool-level free (already -1) is a no-op.
+        """
         if num_blocks < 1:
             return
-        freed: set[int] = set()
+        if num_blocks > block_table.max_logical_blocks:
+            raise ValueError("num_blocks exceeds block table capacity")
+        # Collect the unique physical blocks mapped across all layers so each
+        # is released exactly once (an instance is shared across layers).
+        to_free: set[int] = set()
         for layer in range(self._num_layers):
             for logical in range(num_blocks):
                 p = block_table.get(layer, logical)
                 if p >= 0:
-                    freed.add(p)
-        for p in freed:
+                    to_free.add(p)
+        for p in to_free:
             self._allocator.free(p)
+        # Clear the mappings in every layer after releasing the pool block.
+        for layer in range(self._num_layers):
+            for logical in range(num_blocks):
+                block_table.clear(layer, logical)
 
     # -- KV I/O -----------------------------------------------------------
 

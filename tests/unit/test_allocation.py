@@ -165,3 +165,68 @@ class TestPagedKVCacheAllocationBalance:
             assert len(blocks) == 4
             paged.free_blocks(table, 4)
             assert paged.free_block_count == 16  # no accumulation
+
+
+class TestAtomicLifecycle:
+    """Task 2: atomic allocation/free invariants."""
+
+    def test_double_free_raises(self) -> None:
+        from tinyinfer.cache.block import BlockAllocator
+
+        allocator = BlockAllocator(4)
+        b = allocator.allocate()
+        allocator.free(b)
+        with pytest.raises(ValueError, match="not allocated"):
+            allocator.free(b)
+
+    def test_allocation_rollback_restores_pool(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=2,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        table = paged.create_block_table(max_tokens=16)
+        assert paged.free_block_count == 2
+        with pytest.raises((IndexError, RuntimeError)):
+            paged.allocate_blocks(table, 3)  # pool only has 2
+        assert paged.free_block_count == 2
+        for layer in range(2):
+            for logical in range(8):
+                assert table.get(layer, logical) == -1
+
+    def test_successful_free_clears_every_layer_mapping(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=3,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=8,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        table = paged.create_block_table(max_tokens=16)
+        physical = paged.allocate_blocks(table, 2)
+        assert table.get(0, 0) == physical[0]
+        assert table.get(1, 1) == physical[1]
+        paged.free_blocks(table, 2)
+        for layer in range(3):
+            for logical in range(2):
+                assert table.get(layer, logical) == -1
+        assert paged.free_block_count == 8
+
+    def test_out_of_range_free_fails(self) -> None:
+        from tinyinfer.cache.block import BlockAllocator
+
+        allocator = BlockAllocator(4)
+        with pytest.raises(ValueError):
+            allocator.free(99)
