@@ -31,7 +31,7 @@ class FakeDenseModel:
         batch = int(input_ids.shape[0])
         if past is not None:
             for layer in range(self.num_layers):
-                kv = torch.zeros(batch, 2, 1, 4)
+                kv = torch.zeros(batch, 2, 1, 4, dtype=torch.bfloat16)
                 past.update(kv, kv.clone(), layer)
         logits = torch.randn(batch, 1, 10)
         return SimpleNamespace(logits=logits, past_key_values=past)
@@ -164,3 +164,79 @@ class TestPrefillFinalize:
         # every iteration produced at most one decode forward
         for stat in engine.iteration_history:
             assert stat.decode_forward_count in (0, 1)
+
+
+class TestMaxNewBound:
+    """Audit fix: no request may exceed its max_new_tokens."""
+
+    def test_no_request_exceeds_max_new(self) -> None:
+        from tinyinfer.runtime.request import GenerationRequest
+
+        engine = make_engine(max_batch=4)
+        engine.submit(GenerationRequest("a", "aaaa", 1))
+        engine.submit(GenerationRequest("b", "bbbbb", 1))
+        engine.submit(GenerationRequest("c", "cccccccc", 1))
+        results = engine.run()
+        assert len(results) == 3
+        for r in results:
+            assert len(r.output_token_ids) <= 1, (
+                f"{r.request_id} exceeded max_new=1: {r.output_token_ids}"
+            )
+
+
+class TestFailureCleanup:
+    """Audit fix: prefill/decode exceptions must release blocks and states."""
+
+    def test_prefill_exception_cleans_all(self) -> None:
+        engine = make_engine(max_batch=4)
+        paged = engine._paged
+        initial_free = paged.free_block_count
+
+        engine.submit(make_req("a", "aaaa", 3))
+        engine.submit(make_req("b", "bbbbb", 3))
+
+        original = engine._loaded.model
+
+        class ExplodingPrefill(FakeDenseModel):
+            def __call__(self, **kwargs: Any) -> Any:
+                pc = kwargs.get("past_key_values")
+                if pc is not None and type(pc).__name__ == "PagedTinyinferCache":
+                    raise RuntimeError("boom in prefill")
+                return super().__call__(**kwargs)
+
+        engine._loaded.model = ExplodingPrefill()
+        with pytest.raises(RuntimeError, match="boom in prefill"):
+            engine.step()
+        engine._loaded.model = original
+
+        assert paged.free_block_count == initial_free, "blocks leaked after prefill error"
+        assert len(engine._states) == 0, "engine states leaked after prefill error"
+        assert engine.queue.running_count == 0
+        assert engine.queue.waiting_count == 0
+
+    def test_decode_exception_cleans_all(self) -> None:
+        engine = make_engine(max_batch=4)
+        paged = engine._paged
+        initial_free = paged.free_block_count
+
+        engine.submit(make_req("a", "aaaa", 3))
+        engine.submit(make_req("b", "bbbbb", 3))
+
+        original = engine._loaded.model
+
+        class ExplodingDecode(FakeDenseModel):
+            def __call__(self, **kwargs: Any) -> Any:
+                pc = kwargs.get("past_key_values")
+                if pc is not None and type(pc).__name__ == "BatchedPagedTinyinferCache":
+                    raise RuntimeError("boom in decode")
+                return super().__call__(**kwargs)
+
+        engine._loaded.model = ExplodingDecode()
+        with pytest.raises(RuntimeError, match="boom in decode"):
+            engine.step()
+        engine._loaded.model = original
+
+        assert paged.free_block_count == initial_free, "blocks leaked after decode error"
+        assert len(engine._states) == 0, "engine states leaked after decode error"
+        assert engine.queue.running_count == 0
+        assert engine.queue.waiting_count == 0

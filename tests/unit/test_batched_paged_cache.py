@@ -166,3 +166,29 @@ class TestGatherContent:
                 assert torch.count_nonzero(k[row, :, :lead, :]) == 0
             # non-padded region non-zero (prefill used 1..old_len and decode token)
             assert torch.count_nonzero(k[row, :, lead:, :]) > 0
+
+
+class TestGeometryValidation:
+    """Audit fix: foreign-geometry states must be rejected at construction."""
+
+    def test_rejects_foreign_geometry(self) -> None:
+        from tinyinfer.cache.batched_paged_tinyinfer_cache import (
+            BatchedPagedTinyinferCache,
+        )
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=2,
+            block_size=4,
+            head_dim=4,
+            num_physical_blocks=32,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        states = make_states(paged, [2, 3])
+        # Corrupt the stamped pool geometry on the first table to simulate a
+        # foreign state (different num_layers).
+        states[0].block_table.pool_geometry = (3, 2, 4, 4)
+        with pytest.raises(ValueError, match="geometry"):
+            BatchedPagedTinyinferCache(paged, states)

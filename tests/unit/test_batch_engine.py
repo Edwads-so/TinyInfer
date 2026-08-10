@@ -45,7 +45,7 @@ class FakeDenseModel:
             )
             # Exercise the cache: simulate layer updates so lengths advance
             for layer in range(self.num_layers):
-                kv = torch.zeros(batch, 2, 1, 4)
+                kv = torch.zeros(batch, 2, 1, 4, dtype=torch.bfloat16)
                 past.update(kv, kv.clone(), layer)
         logits = torch.randn(batch, 1, 10)
         return SimpleNamespace(logits=logits, past_key_values=past)
@@ -108,9 +108,9 @@ class TestOneBatchedForward:
         engine = make_engine()
         # max_new=1 => exactly one decode iteration, guaranteeing a single
         # batched (3,1) forward (prefill calls are batch=1).
-        engine.submit(make_req("a", "aaaa", 1))
-        engine.submit(make_req("b", "bbbbbb", 1))
-        engine.submit(make_req("c", "cccccccc", 1))
+        engine.submit(make_req("a", "aaaa", 2))
+        engine.submit(make_req("b", "bbbbbb", 2))
+        engine.submit(make_req("c", "cccccccc", 2))
         engine.run()
 
         decode_calls = engine._loaded.model.decode_calls

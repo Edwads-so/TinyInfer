@@ -177,3 +177,35 @@ class TestGatherBatch:
         k_b, _ = paged.gather_batch(0, t_b, [2])
         # distinct token magnitudes prove no cross-request contamination
         assert k_a[0, 0, 0, 0] != k_b[0, 0, 0, 0]
+
+
+class TestBatchValidationMetadata:
+    """Audit fix: batched decode must reject mismatched dtype/device unchanged."""
+
+    def test_wrong_dtype_rejected(self) -> None:
+        paged = make_paged()
+        lengths = [2, 3]
+        tables = make_tables(paged, lengths)
+        write_prefill_all(paged, tables, lengths)
+        before = paged._buffer.clone()
+
+        key = torch.randn(2, 2, 1, 4, dtype=torch.float32)  # wrong dtype
+        value = key.clone()
+        with pytest.raises(ValueError, match="dtype"):
+            paged.write_decode_batch(key, value, 0, tables, list(lengths))
+        assert torch.equal(paged._buffer, before)
+
+    def test_wrong_device_rejected(self) -> None:
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        paged = make_paged()
+        lengths = [2, 3]
+        tables = make_tables(paged, lengths)
+        write_prefill_all(paged, tables, lengths)
+        before = paged._buffer.clone()
+
+        key = torch.randn(2, 2, 1, 4, dtype=torch.bfloat16, device="cuda")
+        value = key.clone()
+        with pytest.raises(ValueError, match="device"):
+            paged.write_decode_batch(key, value, 0, tables, list(lengths))
+        assert torch.equal(paged._buffer, before)

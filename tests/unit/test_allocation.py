@@ -230,3 +230,34 @@ class TestAtomicLifecycle:
         allocator = BlockAllocator(4)
         with pytest.raises(ValueError):
             allocator.free(99)
+
+
+class TestCapacityOverflow:
+    """Audit fix: table-capacity overflow must roll back without dirty mappings."""
+
+    def test_capacity_overflow_clears_all_mappings(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=8,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        # table holds max_logical_blocks=2 -> overflow at request of 3 blocks
+        table = paged.create_block_table(max_tokens=4)
+        assert paged.free_block_count == 8
+        with pytest.raises((IndexError, ValueError)):
+            paged.allocate_blocks(table, 3)
+        # pool fully restored
+        assert paged.free_block_count == 8
+        # EVERY logical slot across EVERY layer is -1 (not just written ones)
+        for layer in range(2):
+            for logical in range(table.max_logical_blocks):
+                assert table.get(layer, logical) == -1, (
+                    f"dirty mapping at layer={layer} logical={logical}: {table.get(layer, logical)}"
+                )
