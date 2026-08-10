@@ -36,7 +36,7 @@ Phase 2 capabilities are under active development and are NOT production-ready:
 - `contiguous KV cache`: implemented prototype
 - `paged KV cache`: correctness prototype
 - `FCFS scheduler`: iteration-interleaving prototype
-- `true batched decode`: verified locally (G2-BD; pending remote CI)
+- `true batched decode`: verified locally; audit-remediation re-verified (G2-BD; pending remote CI)
 - `block-native paged attention`: not implemented
 - `G2-P`: not started
 - `full G2`: not passed

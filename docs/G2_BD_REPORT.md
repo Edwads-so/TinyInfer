@@ -29,3 +29,26 @@ is verified on native WSL2:
 
 The batched cache adapter uses dense left-padded gather; block-native paged
 attention is not implemented. Performance claims for B=1/2/4/8 belong to G2-P.
+
+
+## Audit Remediation (2026-08-10)
+
+An independent audit found five boundary/lifecycle defects in the initial
+verification claim, and the `verified locally` wording was premature:
+
+| # | Defect | Fix |
+|---|--------|-----|
+| T2 | `allocate_blocks` overflowed table capacity leaving dirty mappings | pre-check `num_blocks > max_logical_blocks`; rollback via `clear_all()` |
+| T4 | `write_decode_batch` accepted wrong dtype/device | dtype + device validation before mutation |
+| T5 | batched adapter accepted foreign-geometry states | `BlockTable.pool_geometry` stamp + constructor validation |
+| T7 | `step()` decoded past `max_new_tokens` | finalize-before-decode in `step()` |
+| T7 | prefill/decode exceptions leaked blocks/states/queue entries | `_abort_all()` cleanup + re-raise |
+
+Each defect now has a RED regression test (`TestCapacityOverflow`,
+`TestBatchValidationMetadata`, `TestGeometryValidation`, `TestMaxNewBound`,
+`TestFailureCleanup`) and the full verifier was re-run green:
+
+- `verify_g2_bd.py` 8-step gate: **PASS**
+- unit suite: 279 passed (was 272)
+- GPU batched decode integration: 2 passed (real Qwen `[3,1]` path identity +
+  token alignment retained)

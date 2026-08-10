@@ -20,7 +20,7 @@
 | contiguous KV cache | `implemented prototype` |
 | paged KV cache | `correctness prototype` |
 | FCFS scheduler | `iteration-interleaving prototype` |
-| true batched decode | `verified locally (G2-BD, pending remote CI)` |
+| true batched decode | `verified locally; audit-remediation re-verified (G2-BD, remote CI pending)` |
 | block-native paged attention | `not implemented` |
 | G2 | `not passed` |
 
@@ -35,6 +35,8 @@
 
 ## Boundary Notes
 
-- Only single-request decode is currently proven correct against the HF
-  reference; batched decode is still a scheduler prototype.
+- True heterogeneous batched decode is proven correct against the HF
+  reference (GPU, `tests/integration/test_batch_decode.py`); an independent
+  audit found and we fixed five boundary/lifecycle defects, then re-ran the
+  full `scripts/verify_g2_bd.py` gate green.
 - Paged KV uses dense left-padded gather, not block-native paged attention.
