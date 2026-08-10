@@ -110,6 +110,13 @@ class RequestQueue:
     def cancelled_count(self) -> int:
         return sum(1 for entry in self._entries if entry.state == "cancelled")
 
+    def state_of(self, request_id: str) -> RequestState:
+        """Return the current state of a request, raising if unknown."""
+        for entry in self._entries:
+            if entry.request.request_id == request_id:
+                return entry.state
+        raise KeyError(f"no request with id {request_id!r}")
+
     def snapshot(self) -> BatchResult:
         """Return a point-in-time summary of the queue."""
         return BatchResult(

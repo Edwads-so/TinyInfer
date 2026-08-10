@@ -64,6 +64,11 @@ class BatchEngine:
         self._requests[request.request_id] = request
         self._queue.enqueue(request)
 
+    def cancel(self, request_id: str) -> None:
+        """Cancel a waiting/running request and release its allocated blocks."""
+        self._queue.cancel(request_id)
+        self._release_state(request_id)
+
     def step(self) -> int:
         """Run one scheduling iteration.  Returns finished count."""
         admitted = self._queue.admit(self._max_batch - self._queue.running_count)
@@ -88,12 +93,10 @@ class BatchEngine:
         cancelled = 0
         req_ids_seen: list[str] = []
         for rid in list(self._states):
-            st = self._states[rid]
             if self._is_done(rid):
                 result = self._build_result(rid)
                 self._queue.mark_finished(rid, result)
-                self._paged.release_request(st.cache)
-                del self._states[rid]
+                self._release_state(rid)
                 finished += 1
             if rid not in running_ids_after and self._queue.finished_count:
                 req_ids_seen.append(rid)
@@ -198,6 +201,12 @@ class BatchEngine:
         next_tokens = _select_next_tokens(outputs.logits, batch)
         for rid, token in zip(running_ids, next_tokens, strict=True):
             self._states[rid].output_token_ids.append(token)
+
+    def _release_state(self, req_id: str) -> None:
+        """Release any allocated cache blocks for *req_id* and drop state."""
+        st = self._states.pop(req_id, None)
+        if st is not None:
+            self._paged.release_request(st.cache)
 
     def _is_done(self, req_id: str) -> bool:
         req = self._requests[req_id]
