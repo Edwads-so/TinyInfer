@@ -20,7 +20,7 @@
 | contiguous KV cache | `implemented prototype` |
 | paged KV cache | `correctness prototype` |
 | FCFS scheduler | `iteration-interleaving prototype` |
-| true batched decode | `not verified` |
+| true batched decode | `verified locally (G2-BD, pending remote CI)` |
 | block-native paged attention | `not implemented` |
 | G2 | `not passed` |
 

@@ -11,6 +11,9 @@ def test_readme_does_not_claim_all_phase2_is_absent() -> None:
 
 def test_phase2_status_preserves_gate_boundary() -> None:
     text = (ROOT / "docs" / "PHASE2_STATUS.md").read_text(encoding="utf-8")
-    assert "true batched decode: not verified" in text
-    assert "block-native paged attention: not implemented" in text
+    assert "G2-BD" in text
+    assert "G2-P" in text
+    assert "full G2" in text
+    assert "block-native paged attention" in text
+    assert "not implemented" in text
     assert "G2: not passed" in text
