@@ -86,6 +86,21 @@ def _cache_length(cache: Any) -> int:
     return length
 
 
+def _select_next_tokens(logits: Any, expected_batch: int) -> tuple[int, ...]:
+    """Select one greedy token per batch row from a ``[B, seq, V]`` logits tensor.
+
+    Returns exactly *expected_batch* tokens; rejects non-3D tensors or a row
+    count that differs from the expected batch size.
+    """
+    shape = tuple(logits.shape)
+    if len(shape) != 3 or shape[0] < 1 or shape[1] < 1 or shape[2] < 1:
+        raise RuntimeError(f"invalid logits shape: {shape}")
+    if shape[0] != expected_batch:
+        raise RuntimeError(f"logits batch {shape[0]} does not match expected {expected_batch}")
+    row_ids = logits[:, -1, :].argmax(dim=-1)
+    return tuple(int(x) for x in row_ids.tolist())
+
+
 def _select_next_token(logits: Any) -> int:
     shape = tuple(logits.shape)
     if len(shape) != 3 or shape[0] != 1 or shape[1] < 1 or shape[2] < 1:
