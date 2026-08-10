@@ -26,9 +26,21 @@ class BatchedPagedTinyinferCache:
         self._ids = tuple(s.request_id for s in self._states)
         if len(set(self._ids)) != len(self._ids):
             raise ValueError("duplicate request ids in batch")
+        expected_geometry = (
+            paged.num_layers,
+            paged.num_kv_heads,
+            paged.block_size,
+            paged.head_dim,
+        )
         for s in self._states:
             if s.released:
                 raise ValueError(f"request {s.request_id!r} cache state is released")
+            geom = getattr(s.block_table, "pool_geometry", None)
+            if geom != expected_geometry:
+                raise ValueError(
+                    f"request {s.request_id!r} block table geometry {geom} "
+                    f"does not match pool geometry {expected_geometry}"
+                )
         self._old_lengths: tuple[int, ...] = tuple(s.seq_length for s in self._states)
         self._layer = -1
         self.key_cache: list[Any] = []

@@ -15,6 +15,7 @@ class BlockTable:
 
     num_layers: int
     max_logical_blocks: int
+    pool_geometry: tuple[int, int, int, int] | None = None
 
     def __post_init__(self) -> None:
         self._table: list[list[int]] = [

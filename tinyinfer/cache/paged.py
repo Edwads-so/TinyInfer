@@ -95,7 +95,16 @@ class PagedKVCache:
     def create_block_table(self, max_tokens: int) -> BlockTable:
         """Allocate a block table for one request."""
         max_logical = (max_tokens + self._block_size - 1) // self._block_size
-        return BlockTable(self._num_layers, max_logical)
+        return BlockTable(
+            self._num_layers,
+            max_logical,
+            pool_geometry=(
+                self._num_layers,
+                self._num_kv_heads,
+                self._block_size,
+                self._head_dim,
+            ),
+        )
 
     def allocate_blocks(self, block_table: BlockTable, num_blocks: int) -> list[int]:
         """Atomically allocate *num_blocks* physical blocks and map them.
@@ -108,6 +117,10 @@ class PagedKVCache:
             raise ValueError("num_blocks must be non-negative")
         if num_blocks > self._allocator.free_count:
             raise IndexError(f"need {num_blocks} blocks but only {self._allocator.free_count} free")
+        if num_blocks > block_table.max_logical_blocks:
+            raise IndexError(
+                f"need {num_blocks} blocks but table capacity is {block_table.max_logical_blocks}"
+            )
         physical: list[int] = []
         try:
             for _ in range(num_blocks):
@@ -116,15 +129,14 @@ class PagedKVCache:
                 for layer in range(self._num_layers):
                     block_table.set(layer, len(physical) - 1, p)
         except Exception:
-            # Roll back any blocks acquired so far and clear this call's mappings.
+            # Roll back any blocks acquired so far and clear the entire table
+            # so no stale mapping survives any failure path.
             import contextlib
 
             for p in physical:
                 with contextlib.suppress(ValueError):
                     self._allocator.free(p)
-            for layer in range(self._num_layers):
-                for logical in range(len(physical)):
-                    block_table.clear(layer, logical)
+            block_table.clear_all()
             raise
         return physical
 
@@ -289,6 +301,16 @@ class PagedKVCache:
             raise ValueError(f"key heads {key.shape[1]} != pool heads {self._num_kv_heads}")
         if key.shape[3] != self._head_dim:
             raise ValueError(f"key head_dim {key.shape[3]} != pool head_dim {self._head_dim}")
+        if key.dtype != self._dtype or value.dtype != self._dtype:
+            raise ValueError(
+                f"key/value dtype {key.dtype}/{value.dtype} != pool dtype {self._dtype}"
+            )
+        torch = importlib.import_module("torch")
+        pool_device = torch.device(self._device)
+        if torch.device(key.device) != pool_device or torch.device(value.device) != pool_device:
+            raise ValueError(
+                f"key/value device {key.device}/{value.device} != pool device {self._device}"
+            )
         if len(positions) != batch:
             raise ValueError(f"positions length {len(positions)} != batch {batch}")
         for row, pos in enumerate(positions):

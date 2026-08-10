@@ -70,50 +70,59 @@ class BatchEngine:
         self._release_state(request_id)
 
     def step(self) -> int:
-        """Run one scheduling iteration.  Returns finished count."""
+        """Run one scheduling iteration.  Returns finished count.
+
+        Any request that already satisfies its stop condition (EOS, or
+        ``max_new_tokens`` reached) is finalized *before* the batched decode
+        forward, so no request can ever exceed ``max_new_tokens``.  A failure
+        during prefill or decode aborts every in-flight request and releases
+        all blocks, then re-raises.
+        """
         admitted = self._queue.admit(self._max_batch - self._queue.running_count)
         for req in admitted:
             self._init_request_state(req.request_id)
 
-        # Serial prefill for newly admitted requests.
-        for req in admitted:
-            self._prefill_request(req.request_id)
-
-        running = list(self._queue.running_requests)
-        running_ids = [r.request_id for r in running]
-        old_lengths = tuple(self._states[rid].cache.seq_length for rid in running_ids)
-
-        decode_forward_count = 0
-        if running_ids:
-            self._decode_batch(running_ids)
-            decode_forward_count = 1
-
-        running_ids_after = [r.request_id for r in self._queue.running_requests]
         finished = 0
         cancelled = 0
-        req_ids_seen: list[str] = []
-        for rid in list(self._states):
-            if self._is_done(rid):
-                result = self._build_result(rid)
-                self._queue.mark_finished(rid, result)
-                self._release_state(rid)
-                finished += 1
-            if rid not in running_ids_after and self._queue.finished_count:
-                req_ids_seen.append(rid)
+        try:
+            # Serial prefill for newly admitted requests.
+            for req in admitted:
+                self._prefill_request(req.request_id)
 
-        stats = IterationStats(
-            iteration_id=self._iteration,
+            # Finalize requests that are already done (e.g. EOS at prefill or
+            # max_new == 1) BEFORE decoding, so they never enter decode.
+            finished += self._finalize_finished()
+
+            running = list(self._queue.running_requests)
+            running_ids = [r.request_id for r in running]
+            old_lengths = tuple(self._states[rid].cache.seq_length for rid in running_ids)
+
+            if running_ids:
+                self._decode_batch(running_ids)
+        except Exception:
+            # Any failure leaks nothing: abort every in-flight request, cancel
+            # queue entries, return all blocks, and re-raise.
+            cancelled = self._abort_all()
+            self._record_stats(
+                admitted_count=len(admitted),
+                decode_forward_count=0,
+                finished_count=finished,
+                cancelled_count=cancelled,
+                request_ids=(),
+                old_cache_lengths=(),
+            )
+            raise
+
+        finished += self._finalize_finished()
+
+        self._record_stats(
             admitted_count=len(admitted),
-            decode_batch_size=len(running_ids),
-            decode_forward_count=decode_forward_count,
-            running_count_after_step=len([r for r in self._queue.running_requests]),
+            decode_forward_count=1 if running_ids else 0,
             finished_count=finished,
             cancelled_count=cancelled,
             request_ids=tuple(running_ids),
             old_cache_lengths=old_lengths,
         )
-        self._history = (*self._history, stats)
-        self._iteration += 1
         return finished
 
     def run(self) -> list[GenerationResult]:
@@ -125,6 +134,63 @@ class BatchEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _finalize_finished(self) -> int:
+        """Finish every request that satisfies its stop condition.
+
+        Returns the number of requests finalized (blocks released, states
+        dropped, queue entries marked finished).
+        """
+        count = 0
+        for rid in list(self._states):
+            if self._is_done(rid):
+                result = self._build_result(rid)
+                self._queue.mark_finished(rid, result)
+                self._release_state(rid)
+                count += 1
+        return count
+
+    def _abort_all(self) -> int:
+        """Cancel every tracked request and release its blocks.
+
+        Used on prefill/decode failure.  Returns the number of cancelled
+        requests.
+        """
+        count = 0
+        import contextlib
+
+        for rid in list(self._states):
+            st = self._states[rid]
+            with contextlib.suppress(KeyError):
+                self._queue.cancel(rid)
+            count += 1
+            self._paged.release_request(st.cache)
+        self._states.clear()
+        return count
+
+    def _record_stats(
+        self,
+        *,
+        admitted_count: int,
+        decode_forward_count: int,
+        finished_count: int,
+        cancelled_count: int,
+        request_ids: tuple[str, ...],
+        old_cache_lengths: tuple[int, ...],
+    ) -> None:
+        stats = IterationStats(
+            iteration_id=self._iteration,
+            admitted_count=admitted_count,
+            decode_batch_size=len(request_ids),
+            decode_forward_count=decode_forward_count,
+            running_count_after_step=len([r for r in self._queue.running_requests]),
+            finished_count=finished_count,
+            cancelled_count=cancelled_count,
+            request_ids=request_ids,
+            old_cache_lengths=old_cache_lengths,
+        )
+        self._history = (*self._history, stats)
+        self._iteration += 1
 
     def _init_request_state(self, req_id: str) -> None:
         req = self._requests[req_id]
