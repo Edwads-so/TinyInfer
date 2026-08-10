@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from typing import Any
 
 from tinyinfer.cache.block import BlockAllocator, BlockTable
@@ -239,4 +240,132 @@ class PagedKVCache:
             span = end - start
             key_out[0, :, start:end, :] = self._buffer[layer_idx, 0, p, :, :span, :]
             value_out[0, :, start:end, :] = self._buffer[layer_idx, 1, p, :, :span, :]
+        return key_out, value_out
+
+    # -- batched I/O --------------------------------------------------------
+
+    def write_decode_batch(
+        self,
+        key: Any,
+        value: Any,
+        layer_idx: int,
+        block_tables: Sequence[BlockTable],
+        positions: Sequence[int],
+    ) -> None:
+        """Write one decode KV token per request across a batch.
+
+        ``key``/``value``: ``[B, num_kv_heads, 1, head_dim]``.  All rows are
+        validated before any row mutates storage; an invalid batch leaves the
+        physical pool byte-for-byte unchanged.
+        """
+        self._validate_decode_batch(key, value, layer_idx, block_tables, positions)
+        for row in range(len(block_tables)):
+            self.write_decode(
+                key[row : row + 1],
+                value[row : row + 1],
+                layer_idx,
+                block_tables[row],
+                positions[row],
+            )
+
+    def _validate_decode_batch(
+        self,
+        key: Any,
+        value: Any,
+        layer_idx: int,
+        block_tables: Sequence[BlockTable],
+        positions: Sequence[int],
+    ) -> None:
+        if layer_idx < 0 or layer_idx >= self._num_layers:
+            raise ValueError(f"layer_idx {layer_idx} out of range")
+        batch = len(block_tables)
+        if len(key.shape) != 4 or key.shape[0] != batch:
+            raise ValueError(f"key batch {key.shape[0]} does not match {batch} tables")
+        if tuple(value.shape) != tuple(key.shape):
+            raise ValueError("value shape must match key shape")
+        if key.shape[2] != 1 or value.shape[2] != 1:
+            raise ValueError("decode key/value query length must be 1")
+        if key.shape[1] != self._num_kv_heads:
+            raise ValueError(f"key heads {key.shape[1]} != pool heads {self._num_kv_heads}")
+        if key.shape[3] != self._head_dim:
+            raise ValueError(f"key head_dim {key.shape[3]} != pool head_dim {self._head_dim}")
+        if len(positions) != batch:
+            raise ValueError(f"positions length {len(positions)} != batch {batch}")
+        for row, pos in enumerate(positions):
+            if pos < 0:
+                raise ValueError(f"negative position {pos} in row {row}")
+            logical = pos // self._block_size
+            if logical >= block_tables[row].max_logical_blocks:
+                raise ValueError(f"row {row} position {pos} exceeds block table capacity")
+            p = block_tables[row].get(layer_idx, logical)
+            if p < 0:
+                raise RuntimeError(
+                    f"row {row} block table missing physical block for position {pos}"
+                )
+
+    def gather_batch(
+        self,
+        layer_idx: int,
+        block_tables: Sequence[BlockTable],
+        lengths: Sequence[int],
+    ) -> tuple[Any, Any]:
+        """Gather left-padded dense KV for a batch of requests.
+
+        Returns ``(key, value)`` shaped ``[B, num_kv_heads, max(lengths), head_dim]``.
+        Row *i* has its *lengths[i]* valid tokens right-aligned at the end; the
+        leading positions are zero padding.
+        """
+        if layer_idx < 0 or layer_idx >= self._num_layers:
+            raise ValueError(f"layer_idx {layer_idx} out of range")
+        if len(block_tables) != len(lengths):
+            raise ValueError("block_tables and lengths must have equal length")
+        if not block_tables:
+            torch = importlib.import_module("torch")
+            empty = torch.zeros(
+                0,
+                self._num_kv_heads,
+                0,
+                self._head_dim,
+                device=self._device,
+                dtype=self._dtype,
+            )
+            return empty, empty.clone()
+        if not lengths:
+            raise ValueError("lengths cannot be empty when tables are present")
+        if any(not isinstance(n, int) or n < 0 for n in lengths):
+            raise ValueError("lengths must be non-negative integers")
+        max_len = max(lengths)
+        torch = importlib.import_module("torch")
+        batch = len(block_tables)
+        key_out = torch.zeros(
+            batch,
+            self._num_kv_heads,
+            max_len,
+            self._head_dim,
+            device=self._device,
+            dtype=self._dtype,
+        )
+        value_out = torch.zeros_like(key_out)
+        for row, (table, length) in enumerate(zip(block_tables, lengths, strict=True)):
+            if length == 0:
+                continue
+            blocks_needed = (length + self._block_size - 1) // self._block_size
+            # Validate every block is mapped before writing this row.
+            for logical in range(blocks_needed):
+                p = table.get(layer_idx, logical)
+                if p < 0:
+                    raise RuntimeError(
+                        f"row {row} block table missing physical block for logical {logical}"
+                    )
+            dest_start = max_len - length
+            for logical in range(blocks_needed):
+                p = table.get(layer_idx, logical)
+                start = logical * self._block_size
+                end = min(start + self._block_size, length)
+                span = end - start
+                dest = dest_start + start
+                key_out[row, :, dest : dest + span, :] = self._buffer[layer_idx, 0, p, :, :span, :]
+                value_out[row, :, dest : dest + span, :] = self._buffer[
+                    layer_idx, 1, p, :, :span, :
+                ]
         return key_out, value_out
