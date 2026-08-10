@@ -791,3 +791,21 @@ Python 的 duck typing —— "如果它走路像鸭子，叫起来像鸭子，�
 > 文档版本：2026-08-04  
 > 对应代码 revision：`13ff82d`  
 > 作者：TinyInfer Project
+
+
+---
+
+## 附录 C：Phase 2 状态边界（2026-08-10）
+
+> 本文档描述的三条生成路径中：
+>
+> - `generate_greedy`（HF DynamicCache）是已发布的 G1 参考实现；
+> - `generate_with_owned_cache`（ContiguousKVCache）与
+>   `generate_with_paged_cache`（PagedKVCache）当前为 **prototype**；
+> - FCFS scheduler 是 **iteration-interleaving 原型**，尚未实现真正的一次
+>   前向 batched decode；
+> - `true batched decode: not verified`；
+> - `block-native paged attention: not implemented`（当前用 dense 左填充 gather）；
+> - `G2: not passed`。
+
+具体状态请以 `docs/PHASE2_STATUS.md` 为准。
