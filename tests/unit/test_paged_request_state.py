@@ -127,3 +127,69 @@ class TestPagedTinyinferCacheProtocol:
         assert cache.get_seq_length() == 7
         assert cache.get_query_offset() == 7
         assert cache.get_mask_sizes(1, 0) == (8, 0)
+
+
+class TestReleasedCacheReads:
+    """Audit fix: released cache state must reject every read/metadata access."""
+
+    def test_released_rejects_all_read_paths(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+        from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
+        from tinyinfer.cache.request_state import PagedRequestState
+
+        paged = PagedKVCache(
+            num_layers=1,
+            num_kv_heads=1,
+            block_size=16,
+            head_dim=4,
+            num_physical_blocks=4,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        state = PagedRequestState(
+            request_id="r",
+            block_table=paged.create_block_table(max_tokens=64),
+            seq_length=3,
+            blocks_allocated=1,
+        )
+        cache = PagedTinyinferCache(paged, state)
+        state.mark_released()
+
+        with pytest.raises(RuntimeError, match="released"):
+            cache.get_seq_length()
+        with pytest.raises(RuntimeError, match="released"):
+            cache.get_query_offset()
+        with pytest.raises(RuntimeError, match="released"):
+            cache.get_mask_sizes(1)
+        with pytest.raises(RuntimeError, match="released"):
+            _ = cache.length
+        with pytest.raises(RuntimeError, match="released"):
+            cache[0]
+
+    def test_active_reads_still_work(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+        from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
+        from tinyinfer.cache.request_state import PagedRequestState
+
+        paged = PagedKVCache(
+            num_layers=1,
+            num_kv_heads=1,
+            block_size=16,
+            head_dim=4,
+            num_physical_blocks=4,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        state = PagedRequestState(
+            request_id="r",
+            block_table=paged.create_block_table(max_tokens=64),
+            seq_length=3,
+            blocks_allocated=1,
+        )
+        cache = PagedTinyinferCache(paged, state)
+        assert cache.get_seq_length() == 3
+        assert cache.get_query_offset() == 3
+        assert cache.get_mask_sizes(1) == (4, 0)
+        assert cache.length == 3

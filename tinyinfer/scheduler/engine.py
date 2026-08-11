@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 
 from tinyinfer.cache.batched_paged_tinyinfer_cache import BatchedPagedTinyinferCache
 from tinyinfer.cache.paged import PagedKVCache
@@ -78,13 +79,13 @@ class BatchEngine:
         during prefill or decode aborts every in-flight request and releases
         all blocks, then re-raises.
         """
-        admitted = self._queue.admit(self._max_batch - self._queue.running_count)
-        for req in admitted:
-            self._init_request_state(req.request_id)
-
         finished = 0
         cancelled = 0
+        admitted: list[Any] = []
         try:
+            admitted = self._queue.admit(self._max_batch - self._queue.running_count)
+            for req in admitted:
+                self._init_request_state(req.request_id)
             # Serial prefill for newly admitted requests.
             for req in admitted:
                 self._prefill_request(req.request_id)
@@ -151,20 +152,23 @@ class BatchEngine:
         return count
 
     def _abort_all(self) -> int:
-        """Cancel every tracked request and release its blocks.
+        """Cancel every in-flight request and release its blocks.
 
-        Used on prefill/decode failure.  Returns the number of cancelled
-        requests.
+        Used on prefill/decode/admission failure.  Cancels every running
+        queue entry (including ones admitted but whose init failed before
+        their state was tracked) and releases any engine-tracked blocks.
+        Returns the number of cancelled requests.
         """
-        count = 0
         import contextlib
 
-        for rid in list(self._states):
-            st = self._states[rid]
+        count = 0
+        for req in list(self._queue.running_requests):
             with contextlib.suppress(KeyError):
-                self._queue.cancel(rid)
+                self._queue.cancel(req.request_id)
             count += 1
-            self._paged.release_request(st.cache)
+        for rid in list(self._states):
+            self._paged.release_request(self._states[rid].cache)
+            self._requests.pop(rid, None)
         self._states.clear()
         return count
 

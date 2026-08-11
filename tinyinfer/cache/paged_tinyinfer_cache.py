@@ -66,10 +66,12 @@ class PagedTinyinferCache:
 
     def __getitem__(self, layer_idx: int) -> tuple[Any, Any]:
         """Return (key, value) for *layer_idx*."""
+        self._state.require_active()
         return self._paged.read(layer_idx, self._state.block_table, self._state.seq_length)
 
     def get_seq_length(self) -> int:
         """Return the number of tokens currently cached."""
+        self._state.require_active()
         return self._state.seq_length
 
     def get_query_offset(self, _layer_idx: int = 0) -> int:
@@ -78,10 +80,12 @@ class PagedTinyinferCache:
         For incremental decode the query starts after the cached prefix, so the
         offset equals the committed length.
         """
+        self._state.require_active()
         return self._state.seq_length
 
     def get_mask_sizes(self, q_length: int, _layer_idx: int = 0) -> tuple[int, int]:
         """Return (kv_length + q_length, 0) for mask sizing (Transformers 5.x+)."""
+        self._state.require_active()
         return (self._state.seq_length + q_length, 0)
 
     # ------------------------------------------------------------------
@@ -102,4 +106,5 @@ class PagedTinyinferCache:
 
     @property
     def length(self) -> int:
+        self._state.require_active()
         return self._state.seq_length

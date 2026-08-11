@@ -240,3 +240,48 @@ class TestFailureCleanup:
         assert len(engine._states) == 0, "engine states leaked after decode error"
         assert engine.queue.running_count == 0
         assert engine.queue.waiting_count == 0
+
+
+class TestAdmissionPartialFailure:
+    """Audit fix: admission failure must roll back already-allocated requests."""
+
+    def test_init_failure_rolls_back_first_allocation(self) -> None:
+        from tinyinfer.cache.paged import PagedKVCache
+        from tinyinfer.scheduler.engine import BatchEngine
+
+        # Small pool (4 blocks): first request consumes ~3 blocks, the
+        # second request then fails during _init_request_state because
+        # insufficient pool remains.
+        model = FakeDenseModel(num_layers=2)
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=2,
+            block_size=4,
+            head_dim=4,
+            num_physical_blocks=1,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        loaded = SimpleNamespace(
+            model=model,
+            tokenizer=DummyTokenizer(),
+            eos_token_id=999,
+            model_id="fake",
+            model_revision="rev",
+        )
+        engine = BatchEngine(loaded, paged, max_batch=8)
+        initial_free = paged.free_block_count
+
+        engine.submit(make_req("first", "aaaa", 3))
+        engine.submit(make_req("second", "bbbb", 3))
+
+        with pytest.raises((IndexError, ValueError)):
+            engine.step()
+
+        # Pool fully restored (first request's blocks released too).
+        assert paged.free_block_count == initial_free
+        # No half-initialized engine state remains.
+        assert len(engine._states) == 0
+        # Queue must not contain stale running/waiting entries.
+        assert engine.queue.running_count == 0
+        assert engine.queue.waiting_count == 0
