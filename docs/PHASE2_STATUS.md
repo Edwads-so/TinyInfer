@@ -36,7 +36,7 @@
 ## Boundary Notes
 
 - True heterogeneous batched decode is proven correct against the HF
-  reference (GPU, `tests/integration/test_batch_decode.py`); an independent
-  audit found and we fixed five boundary/lifecycle defects, then re-ran the
-  full `scripts/verify_g2_bd.py` gate green.
+  reference (GPU, `tests/integration/test_batch_decode.py`); two independent
+  audit passes found and we fixed seven boundary/lifecycle defects, then
+  re-ran the full `scripts/verify_g2_bd.py` gate green after each pass.
 - Paged KV uses dense left-padded gather, not block-native paged attention.
