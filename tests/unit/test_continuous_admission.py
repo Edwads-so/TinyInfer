@@ -249,16 +249,15 @@ class TestAdmissionPartialFailure:
         from tinyinfer.cache.paged import PagedKVCache
         from tinyinfer.scheduler.engine import BatchEngine
 
-        # Small pool (4 blocks): first request consumes ~3 blocks, the
-        # second request then fails during _init_request_state because
-        # insufficient pool remains.
+        # Two-block pool: the first request allocates both blocks, then the
+        # second request fails during _init_request_state because none remain.
         model = FakeDenseModel(num_layers=2)
         paged = PagedKVCache(
             num_layers=2,
             num_kv_heads=2,
             block_size=4,
             head_dim=4,
-            num_physical_blocks=1,
+            num_physical_blocks=2,
             device="cpu",
             dtype=torch.bfloat16,
         )
@@ -282,6 +281,11 @@ class TestAdmissionPartialFailure:
         assert paged.free_block_count == initial_free
         # No half-initialized engine state remains.
         assert len(engine._states) == 0
+        # Terminal/error cleanup must also discard request metadata, including
+        # the request whose state construction failed before registration.
+        assert len(engine._requests) == 0
         # Queue must not contain stale running/waiting entries.
         assert engine.queue.running_count == 0
         assert engine.queue.waiting_count == 0
+        assert engine.queue.state_of("first") == "cancelled"
+        assert engine.queue.state_of("second") == "cancelled"

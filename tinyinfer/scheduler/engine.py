@@ -165,11 +165,10 @@ class BatchEngine:
         for req in list(self._queue.running_requests):
             with contextlib.suppress(KeyError):
                 self._queue.cancel(req.request_id)
+            self._release_state(req.request_id)
             count += 1
         for rid in list(self._states):
-            self._paged.release_request(self._states[rid].cache)
-            self._requests.pop(rid, None)
-        self._states.clear()
+            self._release_state(rid)
         return count
 
     def _record_stats(
@@ -277,6 +276,7 @@ class BatchEngine:
         st = self._states.pop(req_id, None)
         if st is not None:
             self._paged.release_request(st.cache)
+        self._requests.pop(req_id, None)
 
     def _is_done(self, req_id: str) -> bool:
         req = self._requests[req_id]
