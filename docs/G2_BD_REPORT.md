@@ -61,7 +61,7 @@ by the first pass:
 | # | Defect | Fix |
 |---|--------|-----|
 | T3 | released `PagedTinyinferCache` still served reads | `require_active()` guard on all five read paths (`__getitem__`, `get_seq_length`, `get_query_offset`, `get_mask_sizes`, `length`) |
-| T7 | partial admission leaked allocated blocks on mid-init failure | move `admit` + `_init_request_state` into the `step()` try; `_abort_all()` cancels every running queue entry before releasing blocks |
+| T7 | partial admission leaked blocks, state, and request metadata on mid-init failure | move `admit` + `_init_request_state` into the `step()` try; route every terminal path through `_release_state()` to cancel queue entries, release blocks, and discard request metadata |
 
 Each defect now has a RED regression test (`TestReleasedCacheReads`,
 `TestAdmissionPartialFailure`) and the full verifier was re-run green:
@@ -69,3 +69,5 @@ Each defect now has a RED regression test (`TestReleasedCacheReads`,
 - `verify_g2_bd.py` 8-step gate: **PASS**
 - unit suite: 282 passed (was 279)
 - ruff check/format and mypy: all green
+- tested implementation revision: `1cb47b5` (`fix: clear terminal request metadata`)
+- GPU batched decode integration: 2 passed; all GPU/model integration: 15 passed
