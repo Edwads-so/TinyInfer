@@ -51,7 +51,10 @@ class StepSpec:
 def build_step_specs(python: str = sys.executable) -> tuple[StepSpec, ...]:
     """Build the fixed verification order for the active interpreter."""
     return (
-        StepSpec("pytest-cpu", (python, "-m", "pytest", "-m", "not gpu and not model and not slow")),
+        StepSpec(
+            "pytest-cpu",
+            (python, "-m", "pytest", "-m", "not gpu and not model and not slow"),
+        ),
         StepSpec(
             "pytest-gpu",
             (python, "-m", "pytest", "tests/integration", "-m", "gpu and model", "-v"),
@@ -155,10 +158,7 @@ def execute_steps(
     """Execute ordered steps and stop immediately after the first failure."""
     results: list[StepResult] = []
     for spec in specs:
-        if spec.name == "validate-canonical":
-            result = _validate_canonical_jsonl()
-        else:
-            result = runner(spec)
+        result = _validate_canonical_jsonl() if spec.name == "validate-canonical" else runner(spec)
         results.append(result)
         if not result.passed:
             break

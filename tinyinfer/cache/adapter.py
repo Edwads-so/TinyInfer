@@ -17,7 +17,7 @@ class CacheAdapter:
     def import_from_dynamic_cache(self, dynamic_cache: Any) -> None:
         """Copy every layer's KV from a HF DynamicCache into the contiguous buffer."""
         transformers = importlib.import_module("transformers")
-        Cache = transformers.Cache  # noqa: N806
+        Cache = transformers.Cache
 
         if not isinstance(dynamic_cache, Cache):
             raise TypeError(
@@ -30,7 +30,7 @@ class CacheAdapter:
     def export_to_dynamic_cache(self, *, maximum_length: int = 0) -> Any:
         """Build a fresh HF DynamicCache populated from the contiguous buffer."""
         transformers = importlib.import_module("transformers")
-        DynamicCache = transformers.DynamicCache  # noqa: N806
+        DynamicCache = transformers.DynamicCache
 
         cache = DynamicCache()
         for layer_idx in range(self._contiguous.num_layers):
@@ -51,7 +51,6 @@ class CacheAdapter:
         After the forward, DynamicCache holds one extra token per layer at position
         ``contiguous.length``.
         """
-        old_length = self._contiguous.length
         for layer_idx in range(self._contiguous.num_layers):
             key, value = dynamic_cache[layer_idx]
             # The last position is the new decode token.

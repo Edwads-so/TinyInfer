@@ -26,9 +26,7 @@ class TestBlockAllocatorInvariants:
             if rng.random() < 0.6 and allocator.free_count > 0:
                 # allocate
                 block = allocator.allocate()
-                assert block not in allocated, (
-                    f"double allocation of block {block} at seed {seed}"
-                )
+                assert block not in allocated, f"double allocation of block {block} at seed {seed}"
                 allocated.add(block)
             else:
                 # free an existing block
@@ -37,9 +35,7 @@ class TestBlockAllocatorInvariants:
                     allocator.free(block)
 
             # Invariant: no leaks, no lost blocks
-            assert (
-                allocator.free_count + len(allocated)
-            ) == total, (
+            assert (allocator.free_count + len(allocated)) == total, (
                 f"leak/double: free={allocator.free_count}, "
                 f"used={len(allocated)}, total={total} (seed {seed})"
             )
@@ -109,10 +105,7 @@ class TestPagedKVCacheAllocationBalance:
         # the real torch import but on CPU with tiny dims.  This only checks
         # allocator bookkeeping, not tensor data (uses torch.zeros which is
         # available even on CPU-only environments).
-        try:
-            import torch  # noqa: F401
-        except ImportError:
-            pytest.skip("torch not available")
+        torch = pytest.importorskip("torch")
 
         paged = PagedKVCache(
             num_layers=2,
@@ -121,7 +114,7 @@ class TestPagedKVCacheAllocationBalance:
             head_dim=8,
             num_physical_blocks=32,
             device="cpu",
-            dtype="bfloat16",
+            dtype=torch.bfloat16,
         )
         assert paged.free_block_count == 32
 
@@ -154,10 +147,7 @@ class TestPagedKVCacheAllocationBalance:
     def test_chained_requests_do_not_accumulate_allocations(self) -> None:
         from tinyinfer.cache.paged import PagedKVCache
 
-        try:
-            import torch  # noqa: F401
-        except ImportError:
-            pytest.skip("torch not available")
+        torch = pytest.importorskip("torch")
 
         paged = PagedKVCache(
             num_layers=1,
@@ -166,7 +156,7 @@ class TestPagedKVCacheAllocationBalance:
             head_dim=4,
             num_physical_blocks=16,
             device="cpu",
-            dtype="bfloat16",
+            dtype=torch.bfloat16,
         )
 
         for _ in range(50):
@@ -175,3 +165,99 @@ class TestPagedKVCacheAllocationBalance:
             assert len(blocks) == 4
             paged.free_blocks(table, 4)
             assert paged.free_block_count == 16  # no accumulation
+
+
+class TestAtomicLifecycle:
+    """Task 2: atomic allocation/free invariants."""
+
+    def test_double_free_raises(self) -> None:
+        from tinyinfer.cache.block import BlockAllocator
+
+        allocator = BlockAllocator(4)
+        b = allocator.allocate()
+        allocator.free(b)
+        with pytest.raises(ValueError, match="not allocated"):
+            allocator.free(b)
+
+    def test_allocation_rollback_restores_pool(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=2,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        table = paged.create_block_table(max_tokens=16)
+        assert paged.free_block_count == 2
+        with pytest.raises((IndexError, RuntimeError)):
+            paged.allocate_blocks(table, 3)  # pool only has 2
+        assert paged.free_block_count == 2
+        for layer in range(2):
+            for logical in range(8):
+                assert table.get(layer, logical) == -1
+
+    def test_successful_free_clears_every_layer_mapping(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=3,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=8,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        table = paged.create_block_table(max_tokens=16)
+        physical = paged.allocate_blocks(table, 2)
+        assert table.get(0, 0) == physical[0]
+        assert table.get(1, 1) == physical[1]
+        paged.free_blocks(table, 2)
+        for layer in range(3):
+            for logical in range(2):
+                assert table.get(layer, logical) == -1
+        assert paged.free_block_count == 8
+
+    def test_out_of_range_free_fails(self) -> None:
+        from tinyinfer.cache.block import BlockAllocator
+
+        allocator = BlockAllocator(4)
+        with pytest.raises(ValueError):
+            allocator.free(99)
+
+
+class TestCapacityOverflow:
+    """Audit fix: table-capacity overflow must roll back without dirty mappings."""
+
+    def test_capacity_overflow_clears_all_mappings(self) -> None:
+        torch = pytest.importorskip("torch")
+        from tinyinfer.cache.paged import PagedKVCache
+
+        paged = PagedKVCache(
+            num_layers=2,
+            num_kv_heads=1,
+            block_size=2,
+            head_dim=2,
+            num_physical_blocks=8,
+            device="cpu",
+            dtype=torch.bfloat16,
+        )
+        # table holds max_logical_blocks=2 -> overflow at request of 3 blocks
+        table = paged.create_block_table(max_tokens=4)
+        assert paged.free_block_count == 8
+        with pytest.raises((IndexError, ValueError)):
+            paged.allocate_blocks(table, 3)
+        # pool fully restored
+        assert paged.free_block_count == 8
+        # EVERY logical slot across EVERY layer is -1 (not just written ones)
+        for layer in range(2):
+            for logical in range(table.max_logical_blocks):
+                assert table.get(layer, logical) == -1, (
+                    f"dirty mapping at layer={layer} logical={logical}: {table.get(layer, logical)}"
+                )

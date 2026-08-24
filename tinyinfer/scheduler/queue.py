@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
@@ -110,10 +110,21 @@ class RequestQueue:
     def cancelled_count(self) -> int:
         return sum(1 for entry in self._entries if entry.state == "cancelled")
 
+    def state_of(self, request_id: str) -> RequestState:
+        """Return the current state of a request, raising if unknown."""
+        for entry in self._entries:
+            if entry.request.request_id == request_id:
+                return entry.state
+        raise KeyError(f"no request with id {request_id!r}")
+
     def snapshot(self) -> BatchResult:
         """Return a point-in-time summary of the queue."""
         return BatchResult(
-            finished=[entry.result for entry in self._entries if entry.state == "finished" and entry.result is not None],
+            finished=[
+                entry.result
+                for entry in self._entries
+                if entry.state == "finished" and entry.result is not None
+            ],
             running_count=self.running_count,
             waiting_count=self.waiting_count,
         )

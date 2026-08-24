@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Verify three TinyInfer generation paths on GPU — token-level alignment."""
 
-import sys
-sys.path.insert(0, "/mnt/d/project/TinyInfer")
-
 from tinyinfer.config import EngineConfig
 from tinyinfer.runtime import (
     GenerationRequest,
@@ -14,7 +11,8 @@ from tinyinfer.runtime import (
     reference_generate,
 )
 
-def main():
+
+def main() -> int:
     print("Loading model...")
     loaded = load_reference_model(EngineConfig())
     print(f"  Model: {loaded.model_id} @ {loaded.model_revision}")
@@ -23,8 +21,17 @@ def main():
     prompts = [
         GenerationRequest("short_en", "Explain KV cache in one concise paragraph.", 16),
         GenerationRequest("short_zh", "请用一段简洁的话解释大语言模型中的 KV Cache。", 16),
-        GenerationRequest("structured", "Return exactly three numbered points explaining prefill, decode, and token latency.", 16),
-        GenerationRequest("long_context", "A reference runtime separates prompt prefill from one-token decode. " * 10 + "Summarize the engineering lesson.", 16),
+        GenerationRequest(
+            "structured",
+            "Return exactly three numbered points explaining prefill, decode, and token latency.",
+            16,
+        ),
+        GenerationRequest(
+            "long_context",
+            "A reference runtime separates prompt prefill from one-token decode. " * 10
+            + "Summarize the engineering lesson.",
+            16,
+        ),
     ]
 
     all_passed = True
@@ -46,9 +53,12 @@ def main():
 
         if not (ok1 and ok2 and ok3):
             print(f"  REF: {ref}")
-            if not ok1: print(f"  G1 : {r1.output_token_ids}")
-            if not ok2: print(f"  G1.5: {r2.output_token_ids}")
-            if not ok3: print(f"  G2: {r3.output_token_ids}")
+            if not ok1:
+                print(f"  G1 : {r1.output_token_ids}")
+            if not ok2:
+                print(f"  G1.5: {r2.output_token_ids}")
+            if not ok3:
+                print(f"  G2: {r3.output_token_ids}")
             all_passed = False
 
     print("\n" + "=" * 50)
@@ -58,6 +68,7 @@ def main():
     else:
         print("TOKEN AGREEMENT FAILED")
         return 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
