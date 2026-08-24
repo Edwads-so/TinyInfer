@@ -15,8 +15,8 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
-      - run: uv sync --locked --extra dev
-      - run: uv run --locked --extra dev python -m pytest
-      - run: uv run --locked --extra dev python -m ruff check .
-      - run: uv run --locked --extra dev python -m ruff format --check .
-      - run: uv run --locked --extra dev python -m mypy
+      - run: uv sync --locked --extra dev --extra inference
+      - run: uv run --locked --extra dev --extra inference python -m pytest -m "not gpu and not model"
+      - run: uv run --locked --extra dev --extra inference python -m ruff check .
+      - run: uv run --locked --extra dev --extra inference python -m ruff format --check .
+      - run: uv run --locked --extra dev --extra inference python -m mypy
