@@ -1,0 +1,15 @@
+diff --git a/docs/superpowers/specs/2026-08-24-g2-performance-benchmark-design.md b/docs/superpowers/specs/2026-08-24-g2-performance-benchmark-design.md
+--- a/docs/superpowers/specs/2026-08-24-g2-performance-benchmark-design.md
++++ b/docs/superpowers/specs/2026-08-24-g2-performance-benchmark-design.md
+@@ -1,11 +1,11 @@
+ # G2-P Performance Benchmark Design
+ 
+-**Status:** approved design  
+-**Date:** 2026-08-24  
+-**Base revision:** `v0.2.0-g2-bd` (`2779d766`)  
++**Status:** approved design
++**Date:** 2026-08-24
++**Base revision:** `v0.2.0-g2-bd` (`2779d766`)
+ **Scope:** Phase 2 performance evidence only; no new inference algorithm.
+ 
+ ## 1. Purpose
