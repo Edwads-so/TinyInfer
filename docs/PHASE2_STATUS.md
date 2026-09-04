@@ -9,9 +9,11 @@
 - contiguous KV cache: implemented prototype
 - paged KV cache: correctness prototype
 - FCFS scheduler: iteration-interleaving prototype
-- true batched decode: not verified
+- true batched decode: local candidate
 - block-native paged attention: not implemented
-- G2: not passed
+- G2-P1: not started
+- G2-P2: not started
+- full G2: not passed
 
 ## Capability Table
 
@@ -20,17 +22,23 @@
 | contiguous KV cache | `implemented prototype` |
 | paged KV cache | `correctness prototype` |
 | FCFS scheduler | `iteration-interleaving prototype` |
-| true batched decode | `verified locally; audit-remediation re-verified (G2-BD, remote CI pending)` |
+| true batched decode | `local candidate; native-WSL correctness and audit remediation passed (remote CI status must be checked on the declared commit)` |
 | block-native paged attention | `not implemented` |
-| G2 | `not passed` |
+| G2-P1: batching-throughput evidence | `not started` |
+| G2-P2: paged-KV memory-efficiency evidence | `not started` |
+| full G2 | `not passed` |
 
 ## Gate Boundary
 
-- **G2-BD** (true batched decode correctness): not yet verified; tracked by
+- **G2-BD: local candidate** (true batched decode correctness). Native-WSL
+  verification and audit remediation passed; remote CI status must be checked on the
+  declared commit. Its implementation is tracked by
   `docs/superpowers/plans/2026-08-10-true-batched-decode.md` and
   `docs/superpowers/specs/2026-08-10-true-batched-decode-design.md`.
-- **G2-P** (performance evidence): not started.
-- **full G2**: not passed until G2-BD, G2-P, and the original
+- **G2-P1: not started** — batching-throughput evidence, defined in
+  `docs/superpowers/specs/2026-09-04-g2-performance-design.md`.
+- **G2-P2: not started** — paged-KV memory-efficiency evidence, after P1.
+- **full G2: not passed** until G2-BD, G2-P1, G2-P2, and the original
   `docs/PROJECT_PLAN.md` Gate G2 conditions all pass.
 
 ## Boundary Notes

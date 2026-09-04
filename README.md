@@ -36,9 +36,10 @@ Phase 2 capabilities are under active development and are NOT production-ready:
 - `contiguous KV cache`: implemented prototype
 - `paged KV cache`: correctness prototype
 - `FCFS scheduler`: iteration-interleaving prototype
-- `true batched decode`: verified locally; audit-remediation re-verified (G2-BD; pending remote CI)
+- `true batched decode`: local candidate; native-WSL correctness and audit remediation passed (remote CI status must be checked on the declared commit)
 - `block-native paged attention`: not implemented
-- `G2-P`: not started
+- `G2-P1` batching-throughput evidence: not started
+- `G2-P2` paged-KV memory-efficiency evidence: not started
 - `full G2`: not passed
 
 See `docs/PHASE2_STATUS.md` and `docs/G2_BD_REPORT.md` for the completion boundary.
@@ -47,9 +48,10 @@ See `docs/PHASE2_STATUS.md` and `docs/G2_BD_REPORT.md` for the completion bounda
 
 Hugging Face provides the Qwen2.5 model structure, tokenizer, weights, correctness
 baseline, and the public reference `Cache`. TinyInfer currently owns request/result
-contracts, the explicit prefill/decode loop, correctness comparison, profiling, and
-benchmark records. Scheduling, cache allocation, block tables, and the Qwen attention
-cache adapter are planned Phase 2+ responsibilities.
+contracts, the explicit prefill/decode loop, correctness comparison, profiling,
+benchmark records, and Phase-2 prototype scheduling/cache allocation/block-table/Qwen
+attention-cache-adapter paths. These prototypes are not production-ready and do not
+constitute full G2.
 
 ## Requirements
 

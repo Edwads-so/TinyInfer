@@ -17,3 +17,14 @@ def test_phase2_status_preserves_gate_boundary() -> None:
     assert "block-native paged attention" in text
     assert "not implemented" in text
     assert "G2: not passed" in text
+
+
+def test_phase2_docs_state_checkpoint_boundaries() -> None:
+    status = (ROOT / "docs" / "PHASE2_STATUS.md").read_text(encoding="utf-8")
+    beginner = (ROOT / "docs" / "BEGINNER_GUIDE.md").read_text(encoding="utf-8")
+
+    assert "G2-BD: local candidate" in status
+    assert "G2-P1: not started" in status
+    assert "G2-P2: not started" in status
+    assert "full G2: not passed" in status
+    assert "true batched decode: not verified" not in beginner
