@@ -1,0 +1,305 @@
+"""Validated workload and raw-record contracts for Phase-2 benchmarks."""
+
+from __future__ import annotations
+
+import json
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from tinyinfer._tokens import validate_token_ids
+
+Phase2Family = Literal["fixed", "mixed", "dynamic_mixed"]
+Phase2Mode = Literal["sequential", "static_batch", "continuous_batch"]
+
+
+def _non_blank(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-blank string")
+    return value
+
+
+def _non_negative_int(name: str, value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _finite_non_negative(name: str, value: object) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise ValueError(f"{name} must be finite and non-negative")
+    return float(value)
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2Request:
+    request_id: str
+    case_id: str
+    prompt: str
+    max_new_tokens: int
+    arrival_iteration: int
+
+    def __post_init__(self) -> None:
+        _non_blank("request_id", self.request_id)
+        _non_blank("case_id", self.case_id)
+        _non_blank("prompt", self.prompt)
+        if type(self.max_new_tokens) is not int or not 1 <= self.max_new_tokens <= 256:
+            raise ValueError("max_new_tokens must be in [1, 256]")
+        _non_negative_int("arrival_iteration", self.arrival_iteration)
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2Workload:
+    workload_id: str
+    family: Phase2Family
+    requests: tuple[Phase2Request, ...]
+
+    def __post_init__(self) -> None:
+        _non_blank("workload_id", self.workload_id)
+        if self.family not in {"fixed", "mixed", "dynamic_mixed"}:
+            raise ValueError("family must be fixed, mixed, or dynamic_mixed")
+        if not self.requests:
+            raise ValueError("requests must not be empty")
+        ids = [request.request_id for request in self.requests]
+        if len(ids) != len(set(ids)):
+            raise ValueError("request_id values must be unique within a workload")
+        arrivals = [request.arrival_iteration for request in self.requests]
+        if self.family in {"fixed", "mixed"} and any(arrivals):
+            raise ValueError(f"{self.family} workloads require arrival_iteration 0")
+        if self.family == "dynamic_mixed" and len(set(arrivals)) < 2:
+            raise ValueError("dynamic_mixed workloads require staggered arrival_iteration values")
+
+
+def load_phase2_workloads(path: Path) -> dict[str, Phase2Workload]:
+    """Read the strict, versioned Phase-2 workload JSON contract."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid Phase-2 workload file: {error}") from error
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "workloads"}:
+        raise ValueError("workload file must contain only schema_version and workloads")
+    if payload["schema_version"] != 1 or not isinstance(payload["workloads"], list):
+        raise ValueError("workload file requires schema_version 1 and workloads list")
+    workloads: dict[str, Phase2Workload] = {}
+    expected = {"workload_id", "family", "requests"}
+    request_keys = {"request_id", "case_id", "prompt", "max_new_tokens", "arrival_iteration"}
+    for index, raw in enumerate(payload["workloads"]):
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != expected
+            or not isinstance(raw["requests"], list)
+        ):
+            raise ValueError(f"workload {index} has invalid schema")
+        requests: list[Phase2Request] = []
+        for request_index, item in enumerate(raw["requests"]):
+            if not isinstance(item, dict) or set(item) != request_keys:
+                raise ValueError(f"workload {index} request {request_index} has invalid schema")
+            try:
+                requests.append(Phase2Request(**item))
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"workload {index} request {request_index} is invalid: {error}"
+                ) from error
+        try:
+            workload = Phase2Workload(
+                workload_id=raw["workload_id"], family=raw["family"], requests=tuple(requests)
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"workload {index} is invalid: {error}") from error
+        if workload.workload_id in workloads:
+            raise ValueError("workload_id values must be unique")
+        workloads[workload.workload_id] = workload
+    if not workloads:
+        raise ValueError("workload file must define at least one workload")
+    return workloads
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2RequestResult:
+    request_id: str
+    output_token_ids: tuple[int, ...]
+    reference_token_ids: tuple[int, ...]
+    token_agreement: float
+    first_mismatch_index: int | None
+
+    def __post_init__(self) -> None:
+        _non_blank("request_id", self.request_id)
+        validate_token_ids("output_token_ids", self.output_token_ids, allow_empty=False)
+        validate_token_ids("reference_token_ids", self.reference_token_ids, allow_empty=False)
+        if self.token_agreement != 1.0:
+            raise ValueError("token_agreement must be exactly 1.0")
+        if self.first_mismatch_index is not None:
+            raise ValueError("first_mismatch_index must be None for exact agreement")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "request_id": self.request_id,
+            "output_token_ids": list(self.output_token_ids),
+            "reference_token_ids": list(self.reference_token_ids),
+            "token_agreement": self.token_agreement,
+            "first_mismatch_index": self.first_mismatch_index,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2Record:
+    schema_version: int
+    git_revision: str
+    model_id: str
+    model_revision: str
+    transformers_version: str
+    torch_version: str
+    dtype: str
+    device_name: str
+    workload_id: str
+    mode: Phase2Mode
+    repetition: int
+    warmup_runs: int
+    command: tuple[str, ...]
+    block_size: int
+    num_physical_blocks: int
+    request_results: tuple[Phase2RequestResult, ...]
+    completed_requests: int
+    generated_tokens: int
+    end_to_end_ms: float
+    requests_per_s: float
+    generated_tokens_per_s: float
+    ttft_p50_ms: float
+    ttft_p95_ms: float
+    tpot_p50_ms: float
+    tpot_p95_ms: float
+    peak_allocated_bytes: int
+    peak_reserved_bytes: int
+    gpu_utilization_percent: float | None
+    pool_free_blocks: int
+    pool_total_blocks: int
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1:
+            raise ValueError("schema_version must be 1")
+        if len(self.git_revision) != 40 or any(
+            char not in "0123456789abcdef" for char in self.git_revision
+        ):
+            raise ValueError("git_revision must be a 40-character lowercase hex SHA")
+        for name in (
+            "model_id",
+            "model_revision",
+            "transformers_version",
+            "torch_version",
+            "dtype",
+            "device_name",
+            "workload_id",
+        ):
+            _non_blank(name, getattr(self, name))
+        if self.mode not in {"sequential", "static_batch", "continuous_batch"}:
+            raise ValueError("mode is invalid")
+        for name in (
+            "repetition",
+            "warmup_runs",
+            "block_size",
+            "num_physical_blocks",
+            "completed_requests",
+            "generated_tokens",
+            "peak_allocated_bytes",
+            "peak_reserved_bytes",
+            "pool_free_blocks",
+            "pool_total_blocks",
+        ):
+            _non_negative_int(name, getattr(self, name))
+        if self.block_size < 1 or self.num_physical_blocks < 1 or self.pool_total_blocks < 1:
+            raise ValueError("cache geometry must be positive")
+        if self.pool_free_blocks > self.pool_total_blocks:
+            raise ValueError("pool_free_blocks cannot exceed pool_total_blocks")
+        if not self.command or any(not isinstance(arg, str) or not arg for arg in self.command):
+            raise ValueError("command must contain non-blank strings")
+        if not self.request_results or self.completed_requests != len(self.request_results):
+            raise ValueError("completed_requests must equal non-empty request_results length")
+        if self.generated_tokens != sum(
+            len(item.output_token_ids) for item in self.request_results
+        ):
+            raise ValueError("generated_tokens must match request results")
+        for name in (
+            "end_to_end_ms",
+            "requests_per_s",
+            "generated_tokens_per_s",
+            "ttft_p50_ms",
+            "ttft_p95_ms",
+            "tpot_p50_ms",
+            "tpot_p95_ms",
+        ):
+            _finite_non_negative(name, getattr(self, name))
+        if self.end_to_end_ms <= 0:
+            raise ValueError("end_to_end_ms must be positive")
+        if self.gpu_utilization_percent is not None:
+            utilization = _finite_non_negative(
+                "gpu_utilization_percent", self.gpu_utilization_percent
+            )
+            if utilization > 100:
+                raise ValueError("gpu_utilization_percent must be at most 100")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            name: (
+                list(value)
+                if name == "command"
+                else [item.to_dict() for item in value]
+                if name == "request_results"
+                else value
+            )
+            for name, value in (
+                (field, getattr(self, field)) for field in self.__dataclass_fields__
+            )
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2Summary:
+    workload_id: str
+    mode: Phase2Mode
+    repetitions: int
+    end_to_end_p50_ms: float
+    end_to_end_p95_ms: float
+    requests_per_s_p50: float
+    requests_per_s_p95: float
+    generated_tokens_per_s_p50: float
+    generated_tokens_per_s_p95: float
+
+
+def _nearest_rank(values: Sequence[float], percentile: int) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        raise ValueError("cannot summarize no values")
+    return ordered[math.ceil(percentile * len(ordered) / 100) - 1]
+
+
+def summarize_records(records: Sequence[Phase2Record]) -> tuple[Phase2Summary, ...]:
+    grouped: dict[tuple[str, Phase2Mode], list[Phase2Record]] = {}
+    for record in records:
+        grouped.setdefault((record.workload_id, record.mode), []).append(record)
+    summaries: list[Phase2Summary] = []
+    for (workload_id, mode), group in sorted(grouped.items()):
+        summaries.append(
+            Phase2Summary(
+                workload_id=workload_id,
+                mode=mode,
+                repetitions=len(group),
+                end_to_end_p50_ms=_nearest_rank([item.end_to_end_ms for item in group], 50),
+                end_to_end_p95_ms=_nearest_rank([item.end_to_end_ms for item in group], 95),
+                requests_per_s_p50=_nearest_rank([item.requests_per_s for item in group], 50),
+                requests_per_s_p95=_nearest_rank([item.requests_per_s for item in group], 95),
+                generated_tokens_per_s_p50=_nearest_rank(
+                    [item.generated_tokens_per_s for item in group], 50
+                ),
+                generated_tokens_per_s_p95=_nearest_rank(
+                    [item.generated_tokens_per_s for item in group], 95
+                ),
+            )
+        )
+    return tuple(summaries)
