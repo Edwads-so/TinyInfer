@@ -9,8 +9,14 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
+from tinyinfer.cache.paged import PagedKVCache
+from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import Phase2Mode, Phase2Request, Phase2Workload
+from tinyinfer.runtime.request import GenerationRequest
+from tinyinfer.runtime.result import GenerationResult
+from tinyinfer.scheduler.engine import BatchEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,72 @@ class RequestLifecycleTimings:
             else (finished - first_token) / 1_000_000 / (output_tokens - 1)
         )
         return RequestMeasurement(ttft_ms=ttft_ms, end_to_end_ms=end_to_end_ms, tpot_ms=tpot_ms)
+
+
+def create_shared_paged_cache(loaded: Any, config: EngineConfig) -> PagedKVCache:
+    """Allocate one shared paged pool using the benchmark's declared geometry."""
+    import importlib
+
+    model_config = loaded.model.config
+    num_kv_heads = int(
+        getattr(model_config, "num_key_value_heads", model_config.num_attention_heads)
+    )
+    torch = importlib.import_module("torch")
+    return PagedKVCache(
+        num_layers=int(model_config.num_hidden_layers),
+        num_kv_heads=num_kv_heads,
+        block_size=config.kv_block_size,
+        head_dim=int(model_config.hidden_size // model_config.num_attention_heads),
+        num_physical_blocks=(config.max_sequence_length + config.kv_block_size - 1)
+        // config.kv_block_size,
+        device=loaded.model.device,
+        dtype=torch.bfloat16,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkloadExecution:
+    """Results and lifecycle timestamps from one shared-pool workload run."""
+
+    results: tuple[GenerationResult, ...]
+    timings: RequestLifecycleTimings
+    paged: PagedKVCache
+
+
+def run_shared_paged_workload(
+    loaded: Any,
+    config: EngineConfig,
+    workload: Phase2Workload,
+    *,
+    mode: Phase2Mode,
+    clock: Callable[[], int] = time.perf_counter_ns,
+) -> WorkloadExecution:
+    """Execute a workload with one shared pool and verify all blocks return."""
+    schedule = submission_schedule(workload, mode=mode)
+    timings = RequestLifecycleTimings(clock=clock)
+    paged = create_shared_paged_cache(loaded, config)
+    max_batch = 1 if mode == "sequential" else len(workload.requests)
+    engine = BatchEngine(loaded, paged, max_batch=max_batch, observer=timings)
+    pending_index = 0
+    iteration = 0
+    while pending_index < len(schedule) or not engine.queue.all_done():
+        while pending_index < len(schedule) and schedule[pending_index][1] <= iteration:
+            request, _ = schedule[pending_index]
+            engine.submit(
+                GenerationRequest(request.request_id, request.prompt, request.max_new_tokens)
+            )
+            pending_index += 1
+        engine.step()
+        iteration += 1
+    results = tuple(engine.queue.drain_finished())
+    expected_ids = {request.request_id for request in workload.requests}
+    if {result.request_id for result in results} != expected_ids or len(results) != len(
+        expected_ids
+    ):
+        raise RuntimeError("workload did not produce exactly one result per request")
+    if paged.free_block_count != paged.num_physical_blocks:
+        raise RuntimeError("shared paged pool did not fully recover")
+    return WorkloadExecution(results=results, timings=timings, paged=paged)
 
 
 def submission_schedule(
