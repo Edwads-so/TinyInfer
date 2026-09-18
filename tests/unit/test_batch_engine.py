@@ -66,7 +66,7 @@ class DummyTokenizer:
         return " ".join(str(t) for t in tokens)
 
 
-def make_engine() -> Any:
+def make_engine(observer: Any = None) -> Any:
     from tinyinfer.cache.paged import PagedKVCache
     from tinyinfer.scheduler.engine import BatchEngine
 
@@ -87,7 +87,7 @@ def make_engine() -> Any:
         model_id="fake",
         model_revision="rev",
     )
-    return BatchEngine(loaded, paged, max_batch=8)
+    return BatchEngine(loaded, paged, max_batch=8, observer=observer)
 
 
 def make_req(rid: str, prompt: str, max_new: int = 3) -> Any:
@@ -143,3 +143,24 @@ class TestSelectNextTokens:
 
         with pytest.raises(RuntimeError, match="invalid logits shape"):
             _select_next_tokens(torch.randn(5), 1)
+
+
+class TestRequestLifecycleObserver:
+    def test_observer_receives_admit_first_token_and_finish_in_order(self) -> None:
+        events: list[tuple[str, str]] = []
+
+        class Observer:
+            def request_admitted(self, request_id: str) -> None:
+                events.append(("admitted", request_id))
+
+            def first_token_ready(self, request_id: str) -> None:
+                events.append(("first_token", request_id))
+
+            def request_finished(self, request_id: str) -> None:
+                events.append(("finished", request_id))
+
+        engine = make_engine(Observer())
+        engine.submit(make_req("a", "aaaa", 1))
+        engine.run()
+
+        assert events == [("admitted", "a"), ("first_token", "a"), ("finished", "a")]

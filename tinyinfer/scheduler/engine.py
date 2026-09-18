@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import Any, Protocol
 
 from tinyinfer.cache.batched_paged_tinyinfer_cache import BatchedPagedTinyinferCache
 from tinyinfer.cache.paged import PagedKVCache
@@ -15,6 +15,30 @@ from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult, StopReason
 from tinyinfer.scheduler.queue import RequestQueue
 from tinyinfer.scheduler.state import EngineRequestState, IterationStats
+
+
+class BatchEngineObserver(Protocol):
+    """Receives request lifecycle events without affecting scheduling."""
+
+    def request_admitted(self, request_id: str) -> None: ...
+
+    def first_token_ready(self, request_id: str) -> None: ...
+
+    def request_finished(self, request_id: str) -> None: ...
+
+
+class _NoOpBatchEngineObserver:
+    def request_admitted(self, request_id: str) -> None:
+        pass
+
+    def first_token_ready(self, request_id: str) -> None:
+        pass
+
+    def request_finished(self, request_id: str) -> None:
+        pass
+
+
+_NO_OP_OBSERVER = _NoOpBatchEngineObserver()
 
 
 class BatchEngine:
@@ -33,6 +57,7 @@ class BatchEngine:
         paged: PagedKVCache,
         *,
         max_batch: int = 8,
+        observer: BatchEngineObserver | None = None,
     ) -> None:
         self._loaded = loaded
         self._paged = paged
@@ -43,6 +68,7 @@ class BatchEngine:
         self._torch = importlib.import_module("torch")
         self._iteration = 0
         self._history: tuple[IterationStats, ...] = ()
+        self._observer = observer if observer is not None else _NO_OP_OBSERVER
 
     @property
     def queue(self) -> RequestQueue:
@@ -86,9 +112,11 @@ class BatchEngine:
             admitted = self._queue.admit(self._max_batch - self._queue.running_count)
             for req in admitted:
                 self._init_request_state(req.request_id)
+                self._observer.request_admitted(req.request_id)
             # Serial prefill for newly admitted requests.
             for req in admitted:
                 self._prefill_request(req.request_id)
+                self._observer.first_token_ready(req.request_id)
 
             # Finalize requests that are already done (e.g. EOS at prefill or
             # max_new == 1) BEFORE decoding, so they never enter decode.
@@ -147,6 +175,7 @@ class BatchEngine:
             if self._is_done(rid):
                 result = self._build_result(rid)
                 self._queue.mark_finished(rid, result)
+                self._observer.request_finished(rid)
                 self._release_state(rid)
                 count += 1
         return count
