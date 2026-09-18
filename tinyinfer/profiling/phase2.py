@@ -258,6 +258,40 @@ class Phase2Record:
             )
         }
 
+    @classmethod
+    def from_dict(cls, payload: object) -> Phase2Record:
+        """Reconstruct a strict record from one JSON-compatible payload."""
+        if not isinstance(payload, dict):
+            raise ValueError("record payload must be an object")
+        expected = set(cls.__dataclass_fields__)
+        if set(payload) != expected:
+            raise ValueError("record payload has unknown or missing keys")
+        raw_results = payload["request_results"]
+        if not isinstance(raw_results, list):
+            raise ValueError("request_results must be a list")
+        request_results: list[Phase2RequestResult] = []
+        for raw in raw_results:
+            if not isinstance(raw, dict) or set(raw) != set(
+                Phase2RequestResult.__dataclass_fields__
+            ):
+                raise ValueError("request result has invalid keys")
+            request_results.append(
+                Phase2RequestResult(
+                    request_id=raw["request_id"],
+                    output_token_ids=tuple(raw["output_token_ids"]),
+                    reference_token_ids=tuple(raw["reference_token_ids"]),
+                    token_agreement=raw["token_agreement"],
+                    first_mismatch_index=raw["first_mismatch_index"],
+                )
+            )
+        values = dict(payload)
+        values["command"] = tuple(payload["command"])
+        values["request_results"] = tuple(request_results)
+        try:
+            return cls(**values)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"invalid record payload: {error}") from error
+
 
 @dataclass(frozen=True, slots=True)
 class Phase2Summary:
