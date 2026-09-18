@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -53,12 +54,26 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def validate_complete_groups(records: Sequence[Phase2Record]) -> None:
+    """Require exactly five uniquely numbered repetitions per workload/mode."""
+    groups: dict[tuple[str, str], list[int]] = {}
+    for record in records:
+        groups.setdefault((record.workload_id, record.mode), []).append(record.repetition)
+    for (workload_id, mode), repetitions in groups.items():
+        if sorted(repetitions) != [0, 1, 2, 3, 4]:
+            raise ValueError(
+                f"{workload_id}/{mode} requires exactly five repetitions numbered 0 through 4"
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Summarize G2-P1 raw JSONL evidence.")
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    summaries = summarize_records(read_phase2_records(args.input))
+    records = read_phase2_records(args.input)
+    validate_complete_groups(records)
+    summaries = summarize_records(records)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(render_markdown(summaries), encoding="utf-8")
     print(f"G2-P1 SUMMARY: wrote {len(summaries)} groups to {args.output}")

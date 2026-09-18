@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
-from benchmarks.summarize_phase2 import read_phase2_records, render_markdown
+from benchmarks.summarize_phase2 import (
+    read_phase2_records,
+    render_markdown,
+    validate_complete_groups,
+)
 from tinyinfer.profiling.phase2 import Phase2Summary
 
 
@@ -49,3 +54,17 @@ def test_renderer_includes_workload_mode_and_percentiles() -> None:
     assert "fixed_b4" in text
     assert "continuous_batch" in text
     assert "300.000" in text
+
+
+def test_complete_groups_require_exactly_five_unique_repetitions() -> None:
+    records = [
+        SimpleNamespace(workload_id="fixed_b1", mode="sequential", repetition=index)
+        for index in range(4)
+    ]
+
+    try:
+        validate_complete_groups(records)
+    except ValueError as error:
+        assert "five" in str(error)
+    else:
+        raise AssertionError("incomplete repetition group must be rejected")
