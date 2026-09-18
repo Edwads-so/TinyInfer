@@ -13,7 +13,12 @@ from typing import Any
 
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.config import EngineConfig
-from tinyinfer.profiling.phase2 import Phase2Mode, Phase2Request, Phase2Workload
+from tinyinfer.profiling.phase2 import (
+    Phase2Mode,
+    Phase2Request,
+    Phase2RequestResult,
+    Phase2Workload,
+)
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
 from tinyinfer.scheduler.engine import BatchEngine
@@ -148,6 +153,31 @@ def assert_token_alignment(
             )
         references[request_id] = reference
     return references
+
+
+def build_request_results(
+    results: Sequence[Any], references: dict[str, tuple[int, ...]]
+) -> tuple[Phase2RequestResult, ...]:
+    """Convert aligned runtime outputs to immutable raw-record request entries."""
+    entries: list[Phase2RequestResult] = []
+    for result in results:
+        try:
+            reference = references[result.request_id]
+        except KeyError as error:
+            raise RuntimeError(f"missing reference tokens for {result.request_id}") from error
+        actual = tuple(result.output_token_ids)
+        if actual != reference:
+            raise RuntimeError(f"unaligned result for {result.request_id}")
+        entries.append(
+            Phase2RequestResult(
+                request_id=result.request_id,
+                output_token_ids=actual,
+                reference_token_ids=reference,
+                token_agreement=1.0,
+                first_mismatch_index=None,
+            )
+        )
+    return tuple(entries)
 
 
 def submission_schedule(

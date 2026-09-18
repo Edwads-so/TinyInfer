@@ -5,6 +5,7 @@ import torch
 from benchmarks.bench_phase2 import (
     RequestLifecycleTimings,
     assert_token_alignment,
+    build_request_results,
     create_shared_paged_cache,
     run_shared_paged_workload,
     submission_schedule,
@@ -151,3 +152,14 @@ def test_alignment_rejects_request_specific_reference_mismatch() -> None:
         assert "r1" in str(error)
     else:
         raise AssertionError("mismatched request reference must abort the benchmark")
+
+
+def test_build_request_results_carries_exact_reference_tokens() -> None:
+    results = (SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),)
+
+    records = build_request_results(results, {"r0": (1, 2)})
+
+    assert records[0].request_id == "r0"
+    assert records[0].output_token_ids == (1, 2)
+    assert records[0].reference_token_ids == (1, 2)
+    assert records[0].token_agreement == 1.0
