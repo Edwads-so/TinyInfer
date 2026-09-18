@@ -5,6 +5,7 @@ import torch
 from benchmarks.bench_phase2 import (
     RequestLifecycleTimings,
     assert_token_alignment,
+    build_phase2_record,
     build_request_results,
     create_shared_paged_cache,
     run_shared_paged_workload,
@@ -163,3 +164,39 @@ def test_build_request_results_carries_exact_reference_tokens() -> None:
     assert records[0].output_token_ids == (1, 2)
     assert records[0].reference_token_ids == (1, 2)
     assert records[0].token_agreement == 1.0
+
+
+def test_build_phase2_record_aggregates_request_metrics() -> None:
+    readings = iter((0, 10_000_000, 30_000_000))
+    timings = RequestLifecycleTimings(clock=lambda: next(readings))
+    timings.request_admitted("r0")
+    timings.first_token_ready("r0")
+    timings.request_finished("r0")
+    execution = SimpleNamespace(
+        results=(SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),),
+        timings=timings,
+        paged=SimpleNamespace(block_size=4, num_physical_blocks=8, free_block_count=8),
+    )
+    loaded = SimpleNamespace(model_id="fake", model_revision="revision")
+
+    record = build_phase2_record(
+        loaded=loaded,
+        workload_id="fixed_b1",
+        mode="sequential",
+        repetition=0,
+        warmup_runs=3,
+        command=("python", "benchmarks/bench_phase2.py"),
+        execution=execution,
+        references={"r0": (1, 2)},
+        git_revision="a" * 40,
+        transformers_version="5.14.1",
+        torch_version="2.13.0",
+        device_name="test-gpu",
+        peak_allocated_bytes=100,
+        peak_reserved_bytes=200,
+    )
+
+    assert record.completed_requests == 1
+    assert record.generated_tokens == 2
+    assert record.ttft_p50_ms == 10.0
+    assert record.tpot_p50_ms == 20.0

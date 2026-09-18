@@ -9,12 +9,14 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from math import ceil
 from typing import Any
 
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import (
     Phase2Mode,
+    Phase2Record,
     Phase2Request,
     Phase2RequestResult,
     Phase2Workload,
@@ -178,6 +180,71 @@ def build_request_results(
             )
         )
     return tuple(entries)
+
+
+def _nearest_rank(values: Sequence[float], percentile: int) -> float:
+    if not values:
+        raise ValueError("cannot calculate percentile from no values")
+    return sorted(values)[ceil(percentile * len(values) / 100) - 1]
+
+
+def build_phase2_record(
+    *,
+    loaded: Any,
+    workload_id: str,
+    mode: Phase2Mode,
+    repetition: int,
+    warmup_runs: int,
+    command: tuple[str, ...],
+    execution: Any,
+    references: dict[str, tuple[int, ...]],
+    git_revision: str,
+    transformers_version: str,
+    torch_version: str,
+    device_name: str,
+    peak_allocated_bytes: int,
+    peak_reserved_bytes: int,
+) -> Phase2Record:
+    """Build one schema-validated raw benchmark record from a completed workload."""
+    request_results = build_request_results(execution.results, references)
+    measurements = [
+        execution.timings.measurement(item.request_id, output_tokens=len(item.output_token_ids))
+        for item in request_results
+    ]
+    end_to_end_ms = max(item.end_to_end_ms for item in measurements)
+    generated_tokens = sum(len(item.output_token_ids) for item in request_results)
+    return Phase2Record(
+        schema_version=1,
+        git_revision=git_revision,
+        model_id=loaded.model_id,
+        model_revision=loaded.model_revision,
+        transformers_version=transformers_version,
+        torch_version=torch_version,
+        dtype="bfloat16",
+        device_name=device_name,
+        workload_id=workload_id,
+        mode=mode,
+        repetition=repetition,
+        warmup_runs=warmup_runs,
+        command=command,
+        block_size=execution.paged.block_size,
+        num_physical_blocks=execution.paged.num_physical_blocks,
+        request_results=request_results,
+        completed_requests=len(request_results),
+        generated_tokens=generated_tokens,
+        end_to_end_ms=end_to_end_ms,
+        requests_per_s=1000 * len(request_results) / end_to_end_ms,
+        generated_tokens_per_s=1000 * generated_tokens / end_to_end_ms,
+        ttft_p50_ms=_nearest_rank([item.ttft_ms for item in measurements], 50),
+        ttft_p95_ms=_nearest_rank([item.ttft_ms for item in measurements], 95),
+        tpot_p50_ms=_nearest_rank([item.tpot_ms for item in measurements], 50),
+        tpot_p95_ms=_nearest_rank([item.tpot_ms for item in measurements], 95),
+        peak_allocated_bytes=peak_allocated_bytes,
+        peak_reserved_bytes=peak_reserved_bytes,
+        gpu_utilization_percent=None,
+        pool_free_blocks=execution.paged.free_block_count,
+        pool_total_blocks=execution.paged.num_physical_blocks,
+    )
 
 
 def submission_schedule(
