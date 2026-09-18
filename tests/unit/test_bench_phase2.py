@@ -4,6 +4,7 @@ import torch
 
 from benchmarks.bench_phase2 import (
     RequestLifecycleTimings,
+    assert_token_alignment,
     create_shared_paged_cache,
     run_shared_paged_workload,
     submission_schedule,
@@ -136,3 +137,17 @@ def test_shared_paged_workload_returns_results_and_recovers_pool() -> None:
     assert {result.request_id for result in execution.results} == {"r0", "r1"}
     assert execution.paged.free_block_count == execution.paged.num_physical_blocks
     assert execution.timings.measurement("r0", output_tokens=2).ttft_ms >= 0
+
+
+def test_alignment_rejects_request_specific_reference_mismatch() -> None:
+    results = (
+        SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),
+        SimpleNamespace(request_id="r1", output_token_ids=(3, 4)),
+    )
+
+    try:
+        assert_token_alignment(results, lambda request_id: (1, 2) if request_id == "r0" else (9,))
+    except RuntimeError as error:
+        assert "r1" in str(error)
+    else:
+        raise AssertionError("mismatched request reference must abort the benchmark")

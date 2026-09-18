@@ -7,7 +7,7 @@ so static and continuous mode semantics are testable without CUDA.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -131,6 +131,23 @@ def run_shared_paged_workload(
     if paged.free_block_count != paged.num_physical_blocks:
         raise RuntimeError("shared paged pool did not fully recover")
     return WorkloadExecution(results=results, timings=timings, paged=paged)
+
+
+def assert_token_alignment(
+    results: Sequence[Any], reference_tokens: Callable[[str], tuple[int, ...]]
+) -> dict[str, tuple[int, ...]]:
+    """Require every request output to equal its own deterministic reference."""
+    references: dict[str, tuple[int, ...]] = {}
+    for result in results:
+        request_id = result.request_id
+        actual = tuple(result.output_token_ids)
+        reference = reference_tokens(request_id)
+        if actual != reference:
+            raise RuntimeError(
+                f"token mismatch for {request_id}: TinyInfer={actual}, HuggingFace={reference}"
+            )
+        references[request_id] = reference
+    return references
 
 
 def submission_schedule(
