@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -70,7 +71,15 @@ def execute_steps(
 def run_cmd(spec: StepSpec) -> StepResult:
     print(f"=== {spec.name} ===  {' '.join(spec.command)}")
     try:
-        result = subprocess.run(spec.command, capture_output=True, text=True, timeout=spec.timeout)
+        environment = os.environ.copy()
+        environment["HF_HUB_OFFLINE"] = "1"
+        result = subprocess.run(
+            spec.command,
+            capture_output=True,
+            text=True,
+            timeout=spec.timeout,
+            env=environment,
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired) as error:
         return StepResult(spec.name, error=str(error))
     if result.returncode == 0:
