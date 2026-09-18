@@ -11,6 +11,7 @@ from benchmarks.bench_phase2 import (
     build_request_results,
     create_shared_paged_cache,
     run_shared_paged_workload,
+    select_workload_modes,
     submission_schedule,
     write_phase2_records_atomic,
 )
@@ -227,3 +228,12 @@ def test_atomic_writer_refuses_to_overwrite_existing_evidence(tmp_path: Path) ->
         assert "--overwrite" in str(error)
     else:
         raise AssertionError("existing evidence must require explicit overwrite")
+
+
+def test_dynamic_workload_rejects_static_batch_mode() -> None:
+    try:
+        select_workload_modes(_dynamic_workload(), ("static_batch",))
+    except ValueError as error:
+        assert "static_batch" in str(error)
+    else:
+        raise AssertionError("dynamic workload must reject static batch mode")

@@ -6,14 +6,21 @@ so static and continuous mode semantics are testable without CUDA.
 
 from __future__ import annotations
 
+import argparse
+import importlib.metadata
 import json
 import os
+import subprocess
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
 from typing import Any
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.config import EngineConfig
@@ -23,7 +30,10 @@ from tinyinfer.profiling.phase2 import (
     Phase2Request,
     Phase2RequestResult,
     Phase2Workload,
+    load_phase2_workloads,
 )
+from tinyinfer.runtime.generation import reference_generate
+from tinyinfer.runtime.hf_loader import load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
 from tinyinfer.scheduler.engine import BatchEngine
@@ -273,6 +283,121 @@ def write_phase2_records_atomic(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def select_workload_modes(
+    workload: Phase2Workload, modes: Sequence[Phase2Mode]
+) -> tuple[Phase2Mode, ...]:
+    """Validate that a mode does not rewrite a workload's declared arrivals."""
+    selected = tuple(modes)
+    if not selected:
+        raise ValueError("at least one benchmark mode is required")
+    if len(selected) != len(set(selected)):
+        raise ValueError("benchmark modes must not contain duplicates")
+    if workload.family == "dynamic_mixed" and "static_batch" in selected:
+        raise ValueError("dynamic_mixed workload cannot run in static_batch mode")
+    return selected
+
+
+def _git_revision() -> str:
+    result = subprocess.run(
+        ("git", "rev-parse", "HEAD"), capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def _default_modes(workload: Phase2Workload) -> tuple[Phase2Mode, ...]:
+    if workload.family == "dynamic_mixed":
+        return ("sequential", "continuous_batch")
+    return ("sequential", "static_batch", "continuous_batch")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the G2-P1 shared-paged-cache benchmark.")
+    parser.add_argument("--config", type=Path, default=Path("configs/qwen2_5_0_5b.yaml"))
+    parser.add_argument("--workloads", type=Path, default=Path("benchmarks/phase2_workloads.json"))
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=("sequential", "static_batch", "continuous_batch"),
+        default=None,
+    )
+    parser.add_argument("--warmup-runs", type=int, default=3)
+    parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument("--overwrite", action="store_true")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run reproducible G2-P1 evidence collection on an offline CUDA host."""
+    from benchmarks.bench_reference import load_engine_config
+
+    args = build_parser().parse_args(argv)
+    if args.warmup_runs < 0:
+        raise ValueError("warmup_runs must be non-negative")
+    if args.repetitions < 5:
+        raise ValueError("repetitions must be at least 5")
+    config = load_engine_config(args.config)
+    if not config.device.startswith("cuda"):
+        raise ValueError("G2-P1 benchmark requires a CUDA configuration")
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("G2-P1 benchmark requires an available CUDA device")
+    workloads = load_phase2_workloads(args.workloads)
+    loaded = load_reference_model(config)
+    command = tuple([sys.executable, *sys.argv[1:]])
+    records: list[Phase2Record] = []
+    for workload in workloads.values():
+        modes = (
+            select_workload_modes(workload, tuple(args.modes))
+            if args.modes is not None
+            else _default_modes(workload)
+        )
+        requests = {
+            item.request_id: GenerationRequest(item.request_id, item.prompt, item.max_new_tokens)
+            for item in workload.requests
+        }
+        references = {
+            request_id: reference_generate(loaded, request)
+            for request_id, request in requests.items()
+        }
+        for mode in modes:
+            for _ in range(args.warmup_runs):
+                execution = run_shared_paged_workload(loaded, config, workload, mode=mode)
+                assert_token_alignment(execution.results, references.__getitem__)
+            for repetition in range(args.repetitions):
+                torch.cuda.synchronize()
+                torch.cuda.reset_peak_memory_stats()
+                execution = run_shared_paged_workload(loaded, config, workload, mode=mode)
+                assert_token_alignment(execution.results, references.__getitem__)
+                torch.cuda.synchronize()
+                records.append(
+                    build_phase2_record(
+                        loaded=loaded,
+                        workload_id=workload.workload_id,
+                        mode=mode,
+                        repetition=repetition,
+                        warmup_runs=args.warmup_runs,
+                        command=command,
+                        execution=execution,
+                        references=references,
+                        git_revision=_git_revision(),
+                        transformers_version=importlib.metadata.version("transformers"),
+                        torch_version=torch.__version__,
+                        device_name=torch.cuda.get_device_name(),
+                        peak_allocated_bytes=int(torch.cuda.max_memory_allocated()),
+                        peak_reserved_bytes=int(torch.cuda.max_memory_reserved()),
+                    )
+                )
+    write_phase2_records_atomic(records, args.output, overwrite=args.overwrite)
+    print(f"G2-P1 BENCHMARK: wrote {len(records)} records to {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def submission_schedule(
