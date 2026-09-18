@@ -6,10 +6,13 @@ so static and continuous mode semantics are testable without CUDA.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import ceil
+from pathlib import Path
 from typing import Any
 
 from tinyinfer.cache.paged import PagedKVCache
@@ -245,6 +248,31 @@ def build_phase2_record(
         pool_free_blocks=execution.paged.free_block_count,
         pool_total_blocks=execution.paged.num_physical_blocks,
     )
+
+
+def write_phase2_records_atomic(
+    records: Sequence[Any], output: Path, *, overwrite: bool = False
+) -> None:
+    """Write complete JSONL through a sibling temporary file then replace atomically."""
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"output already exists: {output}; pass --overwrite to replace it")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f"{output.name}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            for record in records:
+                handle.write(
+                    json.dumps(
+                        record.to_dict(), ensure_ascii=False, allow_nan=False, separators=(",", ":")
+                    )
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def submission_schedule(

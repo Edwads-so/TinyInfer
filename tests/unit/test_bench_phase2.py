@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
@@ -10,6 +12,7 @@ from benchmarks.bench_phase2 import (
     create_shared_paged_cache,
     run_shared_paged_workload,
     submission_schedule,
+    write_phase2_records_atomic,
 )
 from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import Phase2Request, Phase2Workload
@@ -200,3 +203,27 @@ def test_build_phase2_record_aggregates_request_metrics() -> None:
     assert record.generated_tokens == 2
     assert record.ttft_p50_ms == 10.0
     assert record.tpot_p50_ms == 20.0
+
+
+def test_atomic_writer_emits_one_json_object_per_line(tmp_path: Path) -> None:
+    output = tmp_path / "results.jsonl"
+    record = SimpleNamespace(to_dict=lambda: {"schema_version": 1, "value": 2})
+
+    write_phase2_records_atomic((record,), output)
+
+    assert [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()] == [
+        {"schema_version": 1, "value": 2}
+    ]
+    assert not output.with_name("results.jsonl.tmp").exists()
+
+
+def test_atomic_writer_refuses_to_overwrite_existing_evidence(tmp_path: Path) -> None:
+    output = tmp_path / "results.jsonl"
+    output.write_text("existing\n", encoding="utf-8")
+
+    try:
+        write_phase2_records_atomic((), output)
+    except FileExistsError as error:
+        assert "--overwrite" in str(error)
+    else:
+        raise AssertionError("existing evidence must require explicit overwrite")
