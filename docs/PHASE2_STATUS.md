@@ -36,7 +36,8 @@
   `docs/superpowers/plans/2026-08-10-true-batched-decode.md` and
   `docs/superpowers/specs/2026-08-10-true-batched-decode-design.md`.
 - **G2-P1: not started** — batching-throughput evidence, defined in
-  `docs/superpowers/specs/2026-09-04-g2-performance-design.md`.
+  `docs/superpowers/specs/2026-09-04-g2-performance-design.md`; implementation
+  and GPU handoff are in `docs/G2_P1_RUNBOOK.md`.
 - **G2-P2: not started** — paged-KV memory-efficiency evidence, after P1.
 - **full G2: not passed** until G2-BD, G2-P1, G2-P2, and the original
   `docs/PROJECT_PLAN.md` Gate G2 conditions all pass.

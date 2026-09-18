@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
-from tinyinfer.profiling.phase2 import Phase2Record, Phase2Summary
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tinyinfer.profiling.phase2 import Phase2Record, Phase2Summary, summarize_records
 
 
 def read_phase2_records(path: Path) -> list[Phase2Record]:
@@ -46,3 +51,19 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
             f"{summary.end_to_end_p50_ms:.3f} | {summary.end_to_end_p95_ms:.3f} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Summarize G2-P1 raw JSONL evidence.")
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    summaries = summarize_records(read_phase2_records(args.input))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(render_markdown(summaries), encoding="utf-8")
+    print(f"G2-P1 SUMMARY: wrote {len(summaries)} groups to {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
