@@ -266,18 +266,34 @@ def run_hf_sequential_workload(
     return WorkloadExecution(results=results, timings=timings, paged=None)
 
 
+def first_mismatch_index(actual: Sequence[int], reference: Sequence[int]) -> int | None:
+    """Return the first position where two token sequences differ, or ``None``."""
+    for index, (left, right) in enumerate(zip(actual, reference, strict=False)):
+        if left != right:
+            return index
+    if len(actual) != len(reference):
+        return min(len(actual), len(reference))
+    return None
+
+
 def assert_token_alignment(
-    results: Sequence[Any], reference_tokens: Callable[[str], tuple[int, ...]]
+    results: Sequence[Any],
+    reference_tokens: Callable[[str], tuple[int, ...]],
+    *,
+    context: str = "",
 ) -> dict[str, tuple[int, ...]]:
     """Require every request output to equal its own deterministic reference."""
     references: dict[str, tuple[int, ...]] = {}
+    prefix = f"{context}: " if context else ""
     for result in results:
         request_id = result.request_id
         actual = tuple(result.output_token_ids)
         reference = reference_tokens(request_id)
         if actual != reference:
             raise RuntimeError(
-                f"token mismatch for {request_id}: TinyInfer={actual}, HuggingFace={reference}"
+                f"{prefix}token mismatch for {request_id} at index "
+                f"{first_mismatch_index(actual, reference)}: "
+                f"TinyInfer={actual}, HuggingFace={reference}"
             )
         references[request_id] = reference
     return references
@@ -510,14 +526,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             for request_id, request in requests.items()
         }
         for mode in modes:
+            context = f"{workload.workload_id}/{mode}"
             for _ in range(args.warmup_runs):
                 execution = run(workload, mode)
-                assert_token_alignment(execution.results, references.__getitem__)
+                assert_token_alignment(execution.results, references.__getitem__, context=context)
             for repetition in range(args.repetitions):
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
                 execution = run(workload, mode)
-                assert_token_alignment(execution.results, references.__getitem__)
+                assert_token_alignment(execution.results, references.__getitem__, context=context)
                 torch.cuda.synchronize()
                 records.append(
                     build_phase2_record(
