@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
 import torch
 
 from benchmarks.bench_phase2 import (
@@ -9,14 +11,29 @@ from benchmarks.bench_phase2 import (
     assert_token_alignment,
     build_phase2_record,
     build_request_results,
+    check_pool_capacity,
     create_shared_paged_cache,
+    default_modes,
+    run_hf_sequential_workload,
     run_shared_paged_workload,
     select_workload_modes,
     submission_schedule,
     write_phase2_records_atomic,
 )
 from tinyinfer.config import EngineConfig
-from tinyinfer.profiling.phase2 import Phase2Request, Phase2Workload
+from tinyinfer.profiling.phase2 import Phase2Record, Phase2Request, Phase2Workload
+from tinyinfer.runtime.result import GenerationResult
+
+
+def _fixed_workload() -> Phase2Workload:
+    return Phase2Workload(
+        workload_id="fixed",
+        family="fixed",
+        requests=(
+            Phase2Request("r0", "a", "one", 2, 0),
+            Phase2Request("r1", "b", "two", 3, 0),
+        ),
+    )
 
 
 def _dynamic_workload() -> Phase2Workload:
@@ -52,18 +69,51 @@ def test_static_schedule_rejects_staggered_workload() -> None:
         raise AssertionError("static batch must reject staggered arrivals")
 
 
-def test_lifecycle_timings_calculate_ttft_and_end_to_end() -> None:
-    readings = iter((100, 140, 220))
+def test_sequential_schedule_submits_at_declared_arrival() -> None:
+    schedule = submission_schedule(_fixed_workload(), mode="sequential")
+
+    assert [(item.request_id, iteration) for item, iteration in schedule] == [
+        ("r0", 0),
+        ("r1", 0),
+    ]
+
+
+def test_lifecycle_timings_measure_latency_from_submission() -> None:
+    readings = iter((100, 160, 200, 280))
     timings = RequestLifecycleTimings(clock=lambda: next(readings))
 
+    timings.request_submitted("r0")
     timings.request_admitted("r0")
     timings.first_token_ready("r0")
     timings.request_finished("r0")
 
     measurement = timings.measurement("r0", output_tokens=5)
-    assert measurement.ttft_ms == 0.00004
-    assert measurement.end_to_end_ms == 0.00012
+    assert measurement.ttft_ms == 0.0001
+    assert measurement.end_to_end_ms == 0.00018
     assert measurement.tpot_ms == 0.00002
+
+
+def test_lifecycle_timings_require_submission() -> None:
+    readings = iter((100, 140, 220))
+    timings = RequestLifecycleTimings(clock=lambda: next(readings))
+    timings.request_admitted("r0")
+    timings.first_token_ready("r0")
+    timings.request_finished("r0")
+
+    with pytest.raises(ValueError, match="incomplete"):
+        timings.measurement("r0", output_tokens=2)
+
+
+def test_makespan_spans_first_submission_to_last_finish() -> None:
+    readings = iter((0, 0, 10, 20, 25, 45))
+    timings = RequestLifecycleTimings(clock=lambda: next(readings))
+    for request_id in ("r0", "r1"):
+        timings.request_submitted(request_id)
+    for request_id in ("r0", "r1"):
+        timings.first_token_ready(request_id)
+        timings.request_finished(request_id)
+
+    assert timings.makespan_ms() == 0.000045
 
 
 def test_shared_paged_cache_uses_engine_geometry() -> None:
@@ -80,14 +130,67 @@ def test_shared_paged_cache_uses_engine_geometry() -> None:
         )
     )
 
-    paged = create_shared_paged_cache(
-        loaded,
-        EngineConfig(device="cpu", max_sequence_length=32, kv_block_size=8),
-    )
+    config = EngineConfig(device="cpu", max_sequence_length=32, kv_block_size=8)
+    paged = create_shared_paged_cache(loaded, config)
+    larger = create_shared_paged_cache(loaded, config, pool_tokens=33)
 
     assert paged.block_size == 8
     assert paged.num_physical_blocks == 4
     assert paged.free_block_count == 4
+    assert larger.num_physical_blocks == 5
+
+
+class _CharTokenizer:
+    def encode(self, text: str) -> list[int]:
+        return [1] * len(text)
+
+
+def test_pool_capacity_counts_concurrent_requests_for_batch_modes() -> None:
+    loaded = SimpleNamespace(tokenizer=_CharTokenizer())
+    # r0: 3 prompt + 2 new = 5 tokens = 2 blocks; r1: 3 + 3 = 6 tokens = 2 blocks.
+    check_pool_capacity(loaded, _fixed_workload(), mode="sequential", block_size=4, pool_blocks=2)
+    check_pool_capacity(loaded, _fixed_workload(), mode="static_batch", block_size=4, pool_blocks=4)
+
+    with pytest.raises(ValueError, match="kv-pool-tokens"):
+        check_pool_capacity(
+            loaded, _fixed_workload(), mode="continuous_batch", block_size=4, pool_blocks=3
+        )
+
+
+def test_hf_sequential_runs_each_request_through_reference_path() -> None:
+    calls: list[str] = []
+
+    def fake_generate(loaded: Any, request: Any, observer: Any) -> GenerationResult:
+        calls.append(request.request_id)
+        observer.request_started()
+        observer.first_token_ready()
+        observer.request_finished()
+        return GenerationResult(request.request_id, (1,), (5, 6), "x", "length")
+
+    execution = run_hf_sequential_workload(
+        SimpleNamespace(), _fixed_workload(), generate=fake_generate
+    )
+
+    assert calls == ["r0", "r1"]
+    assert execution.paged is None
+    assert execution.timings.measurement("r1", output_tokens=2).ttft_ms >= 0
+
+
+def test_hf_sequential_rejects_dynamic_arrivals() -> None:
+    with pytest.raises(ValueError, match="hf_sequential"):
+        run_hf_sequential_workload(SimpleNamespace(), _dynamic_workload())
+    with pytest.raises(ValueError, match="hf_sequential"):
+        select_workload_modes(_dynamic_workload(), ("hf_sequential",))
+
+
+def test_default_modes_include_hf_reference_only_without_staggered_arrivals() -> None:
+    assert default_modes(_fixed_workload()) == (
+        "hf_sequential",
+        "sequential",
+        "static_batch",
+        "continuous_batch",
+    )
+    assert default_modes(_dynamic_workload()) == ("sequential", "continuous_batch")
 
 
 def test_shared_paged_workload_returns_results_and_recovers_pool() -> None:
@@ -170,28 +273,36 @@ def test_build_request_results_carries_exact_reference_tokens() -> None:
     assert records[0].token_agreement == 1.0
 
 
-def test_build_phase2_record_aggregates_request_metrics() -> None:
-    readings = iter((0, 10_000_000, 30_000_000))
+def _two_request_execution(paged: Any) -> SimpleNamespace:
+    # r0: submit 0, first 10 ms, finish 30 ms.  r1: submit 0, first 40 ms, finish 60 ms.
+    readings = iter((0, 0, 10_000_000, 30_000_000, 40_000_000, 60_000_000))
     timings = RequestLifecycleTimings(clock=lambda: next(readings))
-    timings.request_admitted("r0")
+    timings.request_submitted("r0")
+    timings.request_submitted("r1")
     timings.first_token_ready("r0")
     timings.request_finished("r0")
-    execution = SimpleNamespace(
-        results=(SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),),
+    timings.first_token_ready("r1")
+    timings.request_finished("r1")
+    return SimpleNamespace(
+        results=(
+            SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),
+            SimpleNamespace(request_id="r1", output_token_ids=(3, 4)),
+        ),
         timings=timings,
-        paged=SimpleNamespace(block_size=4, num_physical_blocks=8, free_block_count=8),
+        paged=paged,
     )
-    loaded = SimpleNamespace(model_id="fake", model_revision="revision")
 
-    record = build_phase2_record(
-        loaded=loaded,
-        workload_id="fixed_b1",
-        mode="sequential",
+
+def _record_for(execution: Any, mode: Any) -> Phase2Record:
+    return build_phase2_record(
+        loaded=SimpleNamespace(model_id="fake", model_revision="revision"),
+        workload_id="fixed_b2",
+        mode=mode,
         repetition=0,
         warmup_runs=3,
         command=("python", "benchmarks/bench_phase2.py"),
         execution=execution,
-        references={"r0": (1, 2)},
+        references={"r0": (1, 2), "r1": (3, 4)},
         git_revision="a" * 40,
         transformers_version="5.14.1",
         torch_version="2.13.0",
@@ -200,10 +311,26 @@ def test_build_phase2_record_aggregates_request_metrics() -> None:
         peak_reserved_bytes=200,
     )
 
-    assert record.completed_requests == 1
-    assert record.generated_tokens == 2
-    assert record.ttft_p50_ms == 10.0
+
+def test_build_phase2_record_uses_makespan_for_throughput() -> None:
+    paged = SimpleNamespace(block_size=4, num_physical_blocks=8, free_block_count=8)
+    record = _record_for(_two_request_execution(paged), "sequential")
+
+    assert record.completed_requests == 2
+    assert record.generated_tokens == 4
+    assert record.makespan_ms == 60.0
+    assert record.generated_tokens_per_s == 4000 / 60
+    assert record.e2e_p50_ms == 30.0
+    assert record.e2e_p95_ms == 60.0
+    assert record.ttft_p95_ms == 40.0
     assert record.tpot_p50_ms == 20.0
+
+
+def test_build_phase2_record_omits_pool_for_hf_reference() -> None:
+    record = _record_for(_two_request_execution(None), "hf_sequential")
+
+    assert record.block_size is None
+    assert record.pool_total_blocks is None
 
 
 def test_atomic_writer_emits_one_json_object_per_line(tmp_path: Path) -> None:

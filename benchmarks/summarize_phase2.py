@@ -39,9 +39,12 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
     lines = [
         "# G2-P1 Performance Summary",
         "",
+        "Throughput uses the workload makespan (first submission to last finish). "
+        "TTFT and TPOT are medians across repetitions of each run's request median.",
+        "",
         "| Workload | Mode | Repetitions | Req/s p50 | Req/s p95 | Tok/s p50 | Tok/s p95 "
-        "| E2E p50 ms | E2E p95 ms |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Makespan p50 ms | Makespan p95 ms | TTFT p50 ms | TPOT p50 ms |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for summary in summaries:
         lines.append(
@@ -49,7 +52,8 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
             f"{summary.requests_per_s_p50:.3f} | {summary.requests_per_s_p95:.3f} | "
             f"{summary.generated_tokens_per_s_p50:.3f} | "
             f"{summary.generated_tokens_per_s_p95:.3f} | "
-            f"{summary.end_to_end_p50_ms:.3f} | {summary.end_to_end_p95_ms:.3f} |"
+            f"{summary.makespan_p50_ms:.3f} | {summary.makespan_p95_ms:.3f} | "
+            f"{summary.ttft_p50_ms:.3f} | {summary.tpot_p50_ms:.3f} |"
         )
     return "\n".join(lines) + "\n"
 

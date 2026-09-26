@@ -5,7 +5,11 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("transformers")
 
-from benchmarks.bench_phase2 import assert_token_alignment, run_shared_paged_workload
+from benchmarks.bench_phase2 import (
+    assert_token_alignment,
+    run_hf_sequential_workload,
+    run_shared_paged_workload,
+)
 from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import Phase2Request, Phase2Workload
 from tinyinfer.runtime.generation import reference_generate
@@ -34,4 +38,26 @@ def test_phase2_modes_align_and_recover_pool(mode: str) -> None:
         for item in workload.requests
     }
     assert_token_alignment(execution.results, references.__getitem__)
+    assert execution.paged is not None
     assert execution.paged.free_block_count == execution.paged.num_physical_blocks
+
+
+def test_hf_sequential_reference_aligns() -> None:
+    loaded = load_reference_model(EngineConfig())
+    workload = Phase2Workload(
+        workload_id="gpu_smoke",
+        family="fixed",
+        requests=(
+            Phase2Request("r0", "short", "Explain KV cache.", 4, 0),
+            Phase2Request("r1", "short_zh", "解释 KV Cache。", 4, 0),
+        ),
+    )
+    execution = run_hf_sequential_workload(loaded, workload)
+    references = {
+        item.request_id: reference_generate(
+            loaded, GenerationRequest(item.request_id, item.prompt, item.max_new_tokens)
+        )
+        for item in workload.requests
+    }
+    assert_token_alignment(execution.results, references.__getitem__)
+    assert execution.paged is None

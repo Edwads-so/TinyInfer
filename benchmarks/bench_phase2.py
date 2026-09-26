@@ -25,6 +25,8 @@ if __package__ in (None, ""):
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import (
+    PHASE2_MODES,
+    PHASE2_SCHEMA_VERSION,
     Phase2Mode,
     Phase2Record,
     Phase2Request,
@@ -32,7 +34,7 @@ from tinyinfer.profiling.phase2 import (
     Phase2Workload,
     load_phase2_workloads,
 )
-from tinyinfer.runtime.generation import reference_generate
+from tinyinfer.runtime.generation import generate_greedy, reference_generate
 from tinyinfer.runtime.hf_loader import load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
@@ -49,13 +51,21 @@ class RequestMeasurement:
 
 
 class RequestLifecycleTimings:
-    """Clock-backed ``BatchEngineObserver`` used only by the benchmark runner."""
+    """Clock-backed ``BatchEngineObserver`` used only by the benchmark runner.
+
+    Latency is measured from submission, so time spent waiting in the queue counts
+    toward TTFT and end-to-end latency exactly as a client would observe it.
+    """
 
     def __init__(self, *, clock: Callable[[], int] = time.perf_counter_ns) -> None:
         self._clock = clock
+        self._submitted_ns: dict[str, int] = {}
         self._admitted_ns: dict[str, int] = {}
         self._first_token_ns: dict[str, int] = {}
         self._finished_ns: dict[str, int] = {}
+
+    def request_submitted(self, request_id: str) -> None:
+        self._submitted_ns[request_id] = self._clock()
 
     def request_admitted(self, request_id: str) -> None:
         self._admitted_ns[request_id] = self._clock()
@@ -70,15 +80,16 @@ class RequestLifecycleTimings:
         if type(output_tokens) is not int or output_tokens < 1:
             raise ValueError("output_tokens must be positive")
         try:
-            admitted = self._admitted_ns[request_id]
+            submitted = self._submitted_ns[request_id]
             first_token = self._first_token_ns[request_id]
             finished = self._finished_ns[request_id]
         except KeyError as error:
             raise ValueError(f"incomplete lifecycle timestamps for {request_id!r}") from error
-        if not admitted <= first_token <= finished:
+        admitted = self._admitted_ns.get(request_id, submitted)
+        if not submitted <= admitted <= first_token <= finished:
             raise ValueError(f"non-monotonic lifecycle timestamps for {request_id!r}")
-        ttft_ms = (first_token - admitted) / 1_000_000
-        end_to_end_ms = (finished - admitted) / 1_000_000
+        ttft_ms = (first_token - submitted) / 1_000_000
+        end_to_end_ms = (finished - submitted) / 1_000_000
         tpot_ms = (
             0.0
             if output_tokens == 1
@@ -86,11 +97,59 @@ class RequestLifecycleTimings:
         )
         return RequestMeasurement(ttft_ms=ttft_ms, end_to_end_ms=end_to_end_ms, tpot_ms=tpot_ms)
 
+    def makespan_ms(self) -> float:
+        """Wall time from the first submission to the last completion."""
+        if not self._submitted_ns or not self._finished_ns:
+            raise ValueError("makespan requires submitted and finished requests")
+        return (max(self._finished_ns.values()) - min(self._submitted_ns.values())) / 1_000_000
 
-def create_shared_paged_cache(loaded: Any, config: EngineConfig) -> PagedKVCache:
-    """Allocate one shared paged pool using the benchmark's declared geometry."""
+
+class _HfRequestObserver:
+    """Adapts one request's ``GenerationObserver`` events to shared timings."""
+
+    def __init__(self, timings: RequestLifecycleTimings, request_id: str) -> None:
+        self._timings = timings
+        self._request_id = request_id
+
+    def request_started(self) -> None:
+        self._timings.request_admitted(self._request_id)
+
+    def prefill_started(self) -> None:
+        pass
+
+    def prefill_finished(self) -> None:
+        pass
+
+    def first_token_ready(self) -> None:
+        self._timings.first_token_ready(self._request_id)
+
+    def decode_started(self) -> None:
+        pass
+
+    def decode_finished(self, output_tokens: int) -> None:
+        pass
+
+    def request_finished(self) -> None:
+        self._timings.request_finished(self._request_id)
+
+
+def _blocks_for(tokens: int, block_size: int) -> int:
+    return (tokens + block_size - 1) // block_size
+
+
+def create_shared_paged_cache(
+    loaded: Any, config: EngineConfig, *, pool_tokens: int | None = None
+) -> PagedKVCache:
+    """Allocate one shared paged pool using the benchmark's declared geometry.
+
+    The pool holds ``pool_tokens`` tokens (default: ``config.max_sequence_length``),
+    rounded up to whole blocks.
+    """
     import importlib
 
+    tokens = config.max_sequence_length if pool_tokens is None else pool_tokens
+    if tokens < 1:
+        raise ValueError("pool_tokens must be positive")
     model_config = loaded.model.config
     num_kv_heads = int(
         getattr(model_config, "num_key_value_heads", model_config.num_attention_heads)
@@ -101,20 +160,42 @@ def create_shared_paged_cache(loaded: Any, config: EngineConfig) -> PagedKVCache
         num_kv_heads=num_kv_heads,
         block_size=config.kv_block_size,
         head_dim=int(model_config.hidden_size // model_config.num_attention_heads),
-        num_physical_blocks=(config.max_sequence_length + config.kv_block_size - 1)
-        // config.kv_block_size,
+        num_physical_blocks=_blocks_for(tokens, config.kv_block_size),
         device=loaded.model.device,
         dtype=torch.bfloat16,
     )
 
 
+def check_pool_capacity(
+    loaded: Any, workload: Phase2Workload, *, mode: Phase2Mode, block_size: int, pool_blocks: int
+) -> None:
+    """Fail before running if the pool cannot hold the workload's worst-case residency.
+
+    The engine reserves ``prompt + max_new_tokens`` at admission, so batch modes may
+    hold every request at once while sequential mode holds only the largest one.
+    """
+    needs = [
+        _blocks_for(len(loaded.tokenizer.encode(item.prompt)) + item.max_new_tokens, block_size)
+        for item in workload.requests
+    ]
+    required = max(needs) if mode == "sequential" else sum(needs)
+    if required > pool_blocks:
+        raise ValueError(
+            f"{workload.workload_id}/{mode} needs {required} KV blocks but the pool has "
+            f"{pool_blocks}; raise --kv-pool-tokens to at least {required * block_size}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class WorkloadExecution:
-    """Results and lifecycle timestamps from one shared-pool workload run."""
+    """Results and lifecycle timestamps from one workload run.
+
+    ``paged`` is ``None`` for the Hugging Face reference, which uses its own cache.
+    """
 
     results: tuple[GenerationResult, ...]
     timings: RequestLifecycleTimings
-    paged: PagedKVCache
+    paged: PagedKVCache | None
 
 
 def run_shared_paged_workload(
@@ -124,11 +205,12 @@ def run_shared_paged_workload(
     *,
     mode: Phase2Mode,
     clock: Callable[[], int] = time.perf_counter_ns,
+    pool_tokens: int | None = None,
 ) -> WorkloadExecution:
     """Execute a workload with one shared pool and verify all blocks return."""
     schedule = submission_schedule(workload, mode=mode)
     timings = RequestLifecycleTimings(clock=clock)
-    paged = create_shared_paged_cache(loaded, config)
+    paged = create_shared_paged_cache(loaded, config, pool_tokens=pool_tokens)
     max_batch = 1 if mode == "sequential" else len(workload.requests)
     engine = BatchEngine(loaded, paged, max_batch=max_batch, observer=timings)
     pending_index = 0
@@ -136,6 +218,7 @@ def run_shared_paged_workload(
     while pending_index < len(schedule) or not engine.queue.all_done():
         while pending_index < len(schedule) and schedule[pending_index][1] <= iteration:
             request, _ = schedule[pending_index]
+            timings.request_submitted(request.request_id)
             engine.submit(
                 GenerationRequest(request.request_id, request.prompt, request.max_new_tokens)
             )
@@ -151,6 +234,36 @@ def run_shared_paged_workload(
     if paged.free_block_count != paged.num_physical_blocks:
         raise RuntimeError("shared paged pool did not fully recover")
     return WorkloadExecution(results=results, timings=timings, paged=paged)
+
+
+def run_hf_sequential_workload(
+    loaded: Any,
+    workload: Phase2Workload,
+    *,
+    clock: Callable[[], int] = time.perf_counter_ns,
+    generate: Callable[[Any, GenerationRequest, Any], GenerationResult] = generate_greedy,
+) -> WorkloadExecution:
+    """Run every request to completion, one at a time, on Hugging Face's own cache.
+
+    This is the absolute reference for the paged paths: the same explicit greedy
+    loop as G1, with no TinyInfer cache adapter involved.  All requests arrive at
+    submission time zero, matching the ``fixed`` and ``mixed`` families.
+    """
+    if any(item.arrival_iteration != 0 for item in workload.requests):
+        raise ValueError("hf_sequential requires arrival_iteration 0 for every request")
+    timings = RequestLifecycleTimings(clock=clock)
+    ordered = sorted(workload.requests, key=lambda item: item.request_id)
+    for item in ordered:
+        timings.request_submitted(item.request_id)
+    results = tuple(
+        generate(
+            loaded,
+            GenerationRequest(item.request_id, item.prompt, item.max_new_tokens),
+            _HfRequestObserver(timings, item.request_id),
+        )
+        for item in ordered
+    )
+    return WorkloadExecution(results=results, timings=timings, paged=None)
 
 
 def assert_token_alignment(
@@ -224,10 +337,11 @@ def build_phase2_record(
         execution.timings.measurement(item.request_id, output_tokens=len(item.output_token_ids))
         for item in request_results
     ]
-    end_to_end_ms = max(item.end_to_end_ms for item in measurements)
+    makespan_ms = execution.timings.makespan_ms()
     generated_tokens = sum(len(item.output_token_ids) for item in request_results)
+    paged = execution.paged
     return Phase2Record(
-        schema_version=1,
+        schema_version=PHASE2_SCHEMA_VERSION,
         git_revision=git_revision,
         model_id=loaded.model_id,
         model_revision=loaded.model_revision,
@@ -240,14 +354,16 @@ def build_phase2_record(
         repetition=repetition,
         warmup_runs=warmup_runs,
         command=command,
-        block_size=execution.paged.block_size,
-        num_physical_blocks=execution.paged.num_physical_blocks,
+        block_size=None if paged is None else paged.block_size,
+        num_physical_blocks=None if paged is None else paged.num_physical_blocks,
         request_results=request_results,
         completed_requests=len(request_results),
         generated_tokens=generated_tokens,
-        end_to_end_ms=end_to_end_ms,
-        requests_per_s=1000 * len(request_results) / end_to_end_ms,
-        generated_tokens_per_s=1000 * generated_tokens / end_to_end_ms,
+        makespan_ms=makespan_ms,
+        requests_per_s=1000 * len(request_results) / makespan_ms,
+        generated_tokens_per_s=1000 * generated_tokens / makespan_ms,
+        e2e_p50_ms=_nearest_rank([item.end_to_end_ms for item in measurements], 50),
+        e2e_p95_ms=_nearest_rank([item.end_to_end_ms for item in measurements], 95),
         ttft_p50_ms=_nearest_rank([item.ttft_ms for item in measurements], 50),
         ttft_p95_ms=_nearest_rank([item.ttft_ms for item in measurements], 95),
         tpot_p50_ms=_nearest_rank([item.tpot_ms for item in measurements], 50),
@@ -255,8 +371,8 @@ def build_phase2_record(
         peak_allocated_bytes=peak_allocated_bytes,
         peak_reserved_bytes=peak_reserved_bytes,
         gpu_utilization_percent=None,
-        pool_free_blocks=execution.paged.free_block_count,
-        pool_total_blocks=execution.paged.num_physical_blocks,
+        pool_free_blocks=None if paged is None else paged.free_block_count,
+        pool_total_blocks=None if paged is None else paged.num_physical_blocks,
     )
 
 
@@ -294,8 +410,10 @@ def select_workload_modes(
         raise ValueError("at least one benchmark mode is required")
     if len(selected) != len(set(selected)):
         raise ValueError("benchmark modes must not contain duplicates")
-    if workload.family == "dynamic_mixed" and "static_batch" in selected:
-        raise ValueError("dynamic_mixed workload cannot run in static_batch mode")
+    if workload.family == "dynamic_mixed":
+        for mode in ("static_batch", "hf_sequential"):
+            if mode in selected:
+                raise ValueError(f"dynamic_mixed workload cannot run in {mode} mode")
     return selected
 
 
@@ -306,10 +424,10 @@ def _git_revision() -> str:
     return result.stdout.strip()
 
 
-def _default_modes(workload: Phase2Workload) -> tuple[Phase2Mode, ...]:
+def default_modes(workload: Phase2Workload) -> tuple[Phase2Mode, ...]:
     if workload.family == "dynamic_mixed":
         return ("sequential", "continuous_batch")
-    return ("sequential", "static_batch", "continuous_batch")
+    return PHASE2_MODES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -320,8 +438,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--modes",
         nargs="+",
-        choices=("sequential", "static_batch", "continuous_batch"),
+        choices=PHASE2_MODES,
         default=None,
+    )
+    parser.add_argument(
+        "--kv-pool-tokens",
+        type=int,
+        default=None,
+        help="shared KV pool capacity in tokens (default: config max_sequence_length)",
     )
     parser.add_argument("--warmup-runs", type=int, default=3)
     parser.add_argument("--repetitions", type=int, default=5)
@@ -349,12 +473,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     loaded = load_reference_model(config)
     command = tuple([sys.executable, *sys.argv[1:]])
     records: list[Phase2Record] = []
+    pool_tokens = config.max_sequence_length if args.kv_pool_tokens is None else args.kv_pool_tokens
+    pool_blocks = (pool_tokens + config.kv_block_size - 1) // config.kv_block_size
+    plan: list[tuple[Phase2Workload, tuple[Phase2Mode, ...]]] = []
     for workload in workloads.values():
         modes = (
             select_workload_modes(workload, tuple(args.modes))
             if args.modes is not None
-            else _default_modes(workload)
+            else default_modes(workload)
         )
+        for mode in modes:
+            if mode != "hf_sequential":
+                check_pool_capacity(
+                    loaded,
+                    workload,
+                    mode=mode,
+                    block_size=config.kv_block_size,
+                    pool_blocks=pool_blocks,
+                )
+        plan.append((workload, modes))
+
+    def run(workload: Phase2Workload, mode: Phase2Mode) -> WorkloadExecution:
+        if mode == "hf_sequential":
+            return run_hf_sequential_workload(loaded, workload)
+        return run_shared_paged_workload(
+            loaded, config, workload, mode=mode, pool_tokens=pool_tokens
+        )
+
+    for workload, modes in plan:
         requests = {
             item.request_id: GenerationRequest(item.request_id, item.prompt, item.max_new_tokens)
             for item in workload.requests
@@ -365,12 +511,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         for mode in modes:
             for _ in range(args.warmup_runs):
-                execution = run_shared_paged_workload(loaded, config, workload, mode=mode)
+                execution = run(workload, mode)
                 assert_token_alignment(execution.results, references.__getitem__)
             for repetition in range(args.repetitions):
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
-                execution = run_shared_paged_workload(loaded, config, workload, mode=mode)
+                execution = run(workload, mode)
                 assert_token_alignment(execution.results, references.__getitem__)
                 torch.cuda.synchronize()
                 records.append(
@@ -403,18 +549,20 @@ if __name__ == "__main__":
 def submission_schedule(
     workload: Phase2Workload, *, mode: Phase2Mode
 ) -> tuple[tuple[Phase2Request, int], ...]:
-    """Return deterministic request submission points for one benchmark mode."""
+    """Return deterministic request submission points for one engine-driven mode.
+
+    Every mode submits at the declared arrival iteration; sequential mode then
+    serializes execution through ``max_batch=1`` so queueing time stays visible.
+    """
     ordered = tuple(
         sorted(
             workload.requests, key=lambda request: (request.arrival_iteration, request.request_id)
         )
     )
-    if mode == "sequential":
-        return tuple((request, index) for index, request in enumerate(ordered))
+    if mode in ("sequential", "continuous_batch"):
+        return tuple((request, request.arrival_iteration) for request in ordered)
     if mode == "static_batch":
         if any(request.arrival_iteration != 0 for request in ordered):
             raise ValueError("static_batch requires arrival_iteration 0 for every request")
         return tuple((request, 0) for request in ordered)
-    if mode == "continuous_batch":
-        return tuple((request, request.arrival_iteration) for request in ordered)
     raise ValueError(f"unsupported mode: {mode}")

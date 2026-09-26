@@ -12,7 +12,14 @@ from typing import Literal
 from tinyinfer._tokens import validate_token_ids
 
 Phase2Family = Literal["fixed", "mixed", "dynamic_mixed"]
-Phase2Mode = Literal["sequential", "static_batch", "continuous_batch"]
+Phase2Mode = Literal["hf_sequential", "sequential", "static_batch", "continuous_batch"]
+PHASE2_MODES: tuple[Phase2Mode, ...] = (
+    "hf_sequential",
+    "sequential",
+    "static_batch",
+    "continuous_batch",
+)
+PHASE2_SCHEMA_VERSION = 2
 
 
 def _non_blank(name: str, value: object) -> str:
@@ -163,14 +170,16 @@ class Phase2Record:
     repetition: int
     warmup_runs: int
     command: tuple[str, ...]
-    block_size: int
-    num_physical_blocks: int
+    block_size: int | None
+    num_physical_blocks: int | None
     request_results: tuple[Phase2RequestResult, ...]
     completed_requests: int
     generated_tokens: int
-    end_to_end_ms: float
+    makespan_ms: float
     requests_per_s: float
     generated_tokens_per_s: float
+    e2e_p50_ms: float
+    e2e_p95_ms: float
     ttft_p50_ms: float
     ttft_p95_ms: float
     tpot_p50_ms: float
@@ -178,12 +187,12 @@ class Phase2Record:
     peak_allocated_bytes: int
     peak_reserved_bytes: int
     gpu_utilization_percent: float | None
-    pool_free_blocks: int
-    pool_total_blocks: int
+    pool_free_blocks: int | None
+    pool_total_blocks: int | None
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ValueError("schema_version must be 1")
+        if self.schema_version != PHASE2_SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {PHASE2_SCHEMA_VERSION}")
         if len(self.git_revision) != 40 or any(
             char not in "0123456789abcdef" for char in self.git_revision
         ):
@@ -198,25 +207,18 @@ class Phase2Record:
             "workload_id",
         ):
             _non_blank(name, getattr(self, name))
-        if self.mode not in {"sequential", "static_batch", "continuous_batch"}:
+        if self.mode not in PHASE2_MODES:
             raise ValueError("mode is invalid")
         for name in (
             "repetition",
             "warmup_runs",
-            "block_size",
-            "num_physical_blocks",
             "completed_requests",
             "generated_tokens",
             "peak_allocated_bytes",
             "peak_reserved_bytes",
-            "pool_free_blocks",
-            "pool_total_blocks",
         ):
             _non_negative_int(name, getattr(self, name))
-        if self.block_size < 1 or self.num_physical_blocks < 1 or self.pool_total_blocks < 1:
-            raise ValueError("cache geometry must be positive")
-        if self.pool_free_blocks > self.pool_total_blocks:
-            raise ValueError("pool_free_blocks cannot exceed pool_total_blocks")
+        self._validate_pool()
         if not self.command or any(not isinstance(arg, str) or not arg for arg in self.command):
             raise ValueError("command must contain non-blank strings")
         if not self.request_results or self.completed_requests != len(self.request_results):
@@ -226,23 +228,54 @@ class Phase2Record:
         ):
             raise ValueError("generated_tokens must match request results")
         for name in (
-            "end_to_end_ms",
+            "makespan_ms",
             "requests_per_s",
             "generated_tokens_per_s",
+            "e2e_p50_ms",
+            "e2e_p95_ms",
             "ttft_p50_ms",
             "ttft_p95_ms",
             "tpot_p50_ms",
             "tpot_p95_ms",
         ):
             _finite_non_negative(name, getattr(self, name))
-        if self.end_to_end_ms <= 0:
-            raise ValueError("end_to_end_ms must be positive")
+        if self.makespan_ms <= 0:
+            raise ValueError("makespan_ms must be positive")
+        if self.e2e_p95_ms > self.makespan_ms:
+            raise ValueError("request end-to-end latency cannot exceed the workload makespan")
         if self.gpu_utilization_percent is not None:
             utilization = _finite_non_negative(
                 "gpu_utilization_percent", self.gpu_utilization_percent
             )
             if utilization > 100:
                 raise ValueError("gpu_utilization_percent must be at most 100")
+
+    def _validate_pool(self) -> None:
+        """Paged modes record their pool; the Hugging Face reference has none."""
+        pool = (
+            self.block_size,
+            self.num_physical_blocks,
+            self.pool_free_blocks,
+            self.pool_total_blocks,
+        )
+        if self.mode == "hf_sequential":
+            if any(value is not None for value in pool):
+                raise ValueError("hf_sequential records must not carry pool geometry")
+            return
+        if any(value is None for value in pool):
+            raise ValueError(f"{self.mode} records require pool geometry")
+        block_size, num_physical_blocks, pool_free_blocks, pool_total_blocks = (
+            _non_negative_int(name, value)
+            for name, value in zip(
+                ("block_size", "num_physical_blocks", "pool_free_blocks", "pool_total_blocks"),
+                pool,
+                strict=True,
+            )
+        )
+        if block_size < 1 or num_physical_blocks < 1 or pool_total_blocks < 1:
+            raise ValueError("cache geometry must be positive")
+        if pool_free_blocks > pool_total_blocks:
+            raise ValueError("pool_free_blocks cannot exceed pool_total_blocks")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -298,8 +331,10 @@ class Phase2Summary:
     workload_id: str
     mode: Phase2Mode
     repetitions: int
-    end_to_end_p50_ms: float
-    end_to_end_p95_ms: float
+    makespan_p50_ms: float
+    makespan_p95_ms: float
+    ttft_p50_ms: float
+    tpot_p50_ms: float
     requests_per_s_p50: float
     requests_per_s_p95: float
     generated_tokens_per_s_p50: float
@@ -324,8 +359,10 @@ def summarize_records(records: Sequence[Phase2Record]) -> tuple[Phase2Summary, .
                 workload_id=workload_id,
                 mode=mode,
                 repetitions=len(group),
-                end_to_end_p50_ms=_nearest_rank([item.end_to_end_ms for item in group], 50),
-                end_to_end_p95_ms=_nearest_rank([item.end_to_end_ms for item in group], 95),
+                makespan_p50_ms=_nearest_rank([item.makespan_ms for item in group], 50),
+                makespan_p95_ms=_nearest_rank([item.makespan_ms for item in group], 95),
+                ttft_p50_ms=_nearest_rank([item.ttft_p50_ms for item in group], 50),
+                tpot_p50_ms=_nearest_rank([item.tpot_p50_ms for item in group], 50),
                 requests_per_s_p50=_nearest_rank([item.requests_per_s for item in group], 50),
                 requests_per_s_p95=_nearest_rank([item.requests_per_s for item in group], 95),
                 generated_tokens_per_s_p50=_nearest_rank(

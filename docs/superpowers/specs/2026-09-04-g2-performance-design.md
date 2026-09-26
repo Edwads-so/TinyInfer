@@ -135,3 +135,21 @@ the original Gate G2 requirements.
 - New model families, sampling, distributed inference, or production serving.
 - Combining P1 and P2 into one causal performance claim.
 - A G2 release tag before full-G2 conditions are satisfied.
+
+## Amendment (2026-09-26): measurement fixes before first GPU run
+
+No G2-P1 records existed when these changes were made, so no evidence is reinterpreted.
+
+- **Latency from submission.** Schema v1 measured TTFT and end-to-end latency from
+  admission, which hid queueing time in sequential mode.
+- **Throughput from makespan.** Schema v1 divided tokens by the slowest single
+  request's latency; in sequential mode that overstated throughput by roughly the batch
+  size. Record schema v2 stores `makespan_ms` (first submission to last completion)
+  and per-request `e2e_p50_ms` / `e2e_p95_ms`.
+- **Absolute reference.** A fourth mode, `hf_sequential`, runs each request through the
+  G1 explicit greedy loop on Hugging Face's own cache, so the cost of the paged adapter
+  is visible, not only the relative benefit of batching.
+- **Workload sweep.** `fixed_b1/2/4/8/16` give the batch-size curve; `long_b1/2/4/8`
+  reuse the frozen G1 `long_context` prompt to expose dense-gather cost at long context.
+- **Pool capacity.** `--kv-pool-tokens` sizes the shared pool and every workload/mode
+  is checked against it before any run.

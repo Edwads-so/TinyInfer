@@ -33,6 +33,7 @@ HF_HUB_OFFLINE=1 python benchmarks/bench_phase2.py \
   --config configs/qwen2_5_0_5b.yaml \
   --workloads benchmarks/phase2_workloads.json \
   --output docs/results/g2_p1_raw.jsonl \
+  --kv-pool-tokens 8192 \
   --warmup-runs 3 \
   --repetitions 5
 
@@ -49,14 +50,30 @@ partial JSONL as evidence.
 
 ## Expected workload/mode matrix
 
-| Workload family | Sequential | Static batch | Continuous batch |
-|---|---:|---:|---:|
-| fixed | yes | yes | yes |
-| mixed | yes | yes | yes |
-| dynamic mixed arrival | yes | no | yes |
+| Workloads | HF sequential | Sequential | Static batch | Continuous batch |
+|---|---:|---:|---:|---:|
+| `fixed_b1/2/4/8/16` (short prompts, 32 new tokens) | yes | yes | yes | yes |
+| `long_b1/2/4/8` (G1 `long_context`, 612 prompt tokens) | yes | yes | yes | yes |
+| `mixed_b4` | yes | yes | yes | yes |
+| `dynamic_mixed_b4` | no | yes | no | yes |
 
-Static batch is intentionally invalid for a dynamic-arrival workload, because
-silently changing arrivals would invalidate the comparison.
+- **HF sequential** runs each request through the G1 explicit greedy loop on Hugging
+  Face's own cache. It is the absolute reference for the paged paths.
+- **Sequential** runs the TinyInfer paged path with `max_batch=1`.
+- Static batch and HF sequential are invalid for a dynamic-arrival workload, because
+  silently changing arrivals would invalidate the comparison.
+
+`--kv-pool-tokens 8192` is required: `long_b8` reserves about 328 blocks of 16 tokens,
+more than the 256-block default derived from `max_sequence_length`. The CLI checks every
+workload/mode against the pool before running and fails fast if it is too small.
+
+## Measurement definitions (record schema v2)
+
+- Latency is measured from **submission**, so queueing time counts toward TTFT and
+  end-to-end latency exactly as a client would observe it.
+- Throughput uses the workload **makespan**: first submission to last completion.
+- Per-request end-to-end latency is reported as p50/p95 (`e2e_p50_ms`, `e2e_p95_ms`).
+- HF sequential records carry `null` pool fields because no TinyInfer pool is involved.
 
 ## Evidence required before a status change
 
