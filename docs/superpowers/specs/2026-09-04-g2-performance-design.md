@@ -153,3 +153,15 @@ No G2-P1 records existed when these changes were made, so no evidence is reinter
   reuse the frozen G1 `long_context` prompt to expose dense-gather cost at long context.
 - **Pool capacity.** `--kv-pool-tokens` sizes the shared pool and every workload/mode
   is checked against it before any run.
+
+## Amendment (2026-09-26): BF16 tie rule for batched modes
+
+The first GPU run diverged from the B=1 reference only in batched modes, always on
+`short_zh` at step 23, where the reference's two best logits were both exactly 21.000.
+Two runs per workload/mode were identical, and every B=1 path matched exactly.
+
+Exact token equality across batch shapes is therefore not a property BF16 greedy
+decoding guarantees. The gate becomes: B=1 modes match exactly; batched modes match
+exactly or diverge only at a step where both tokens lie within one BF16 unit of the top
+logit, recorded per request with its position, logit gap, and tolerance. Any larger
+divergence remains a failure.

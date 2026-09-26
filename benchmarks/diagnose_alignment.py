@@ -2,9 +2,10 @@
 
 For every workload/mode this runs the workload more than once and reports, per
 request, where its tokens first differ from ``reference_generate`` and how close
-the reference's top choice was to the token TinyInfer picked at that step.  A tiny
-logit gap means a BF16 near-tie flipped under a different batch shape; a large gap
-points to a logic error.  This tool only diagnoses; it never writes evidence.
+the reference's top choice was to the token TinyInfer picked at that step.  A BF16
+tie (both tokens within one BF16 unit of the top logit) flipped under a different
+batch shape is the accepted case; anything else points to a logic error.  This
+tool only diagnoses; it never writes evidence.
 """
 
 from __future__ import annotations
@@ -21,13 +22,19 @@ if __package__ in (None, ""):
 
 from benchmarks.bench_phase2 import (
     WorkloadExecution,
+    bf16_tie,
     check_pool_capacity,
     default_modes,
-    first_mismatch_index,
+    reference_logits_at,
     run_hf_sequential_workload,
     run_shared_paged_workload,
 )
-from tinyinfer.profiling.phase2 import Phase2Mode, Phase2Workload, load_phase2_workloads
+from tinyinfer.profiling.phase2 import (
+    Phase2Mode,
+    Phase2Workload,
+    first_mismatch_index,
+    load_phase2_workloads,
+)
 from tinyinfer.runtime.generation import reference_generate
 from tinyinfer.runtime.hf_loader import load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
@@ -69,25 +76,7 @@ def divergence_at(
     )
 
 
-def reference_logits_at(loaded: Any, prompt: str, prefix: Sequence[int]) -> Any:
-    """Recompute the B=1 next-token logits after ``prompt`` plus ``prefix``."""
-    import torch
-
-    encoded = loaded.tokenizer(prompt, return_tensors="pt", add_special_tokens=True)
-    device = loaded.model.device
-    prompt_ids = encoded["input_ids"].to(device)
-    generated = torch.tensor([list(prefix)], dtype=torch.long, device=device)
-    input_ids = torch.cat([prompt_ids, generated], dim=1)
-    with torch.inference_mode():
-        outputs = loaded.model(
-            input_ids=input_ids, attention_mask=torch.ones_like(input_ids), use_cache=False
-        )
-    return outputs.logits[0, -1]
-
-
-def _describe(
-    loaded: Any, prompt: str, actual: tuple[int, ...], reference: tuple[int, ...], near_tie: float
-) -> str:
+def _describe(loaded: Any, prompt: str, actual: tuple[int, ...], reference: tuple[int, ...]) -> str:
     index = first_mismatch_index(actual, reference)
     if index is None:
         return "aligned"
@@ -103,7 +92,12 @@ def _describe(
             f"diverges@{index}: full-recompute argmax is {int(logits.argmax())}, "
             f"not reference {reference[index]} (reference itself sits on a near-tie)"
         )
-    verdict = "near-tie" if divergence.logit_gap <= near_tie else "LARGE GAP - investigate"
+    tie = bf16_tie(logits, reference_token=reference[index], actual_token=actual[index])
+    verdict = (
+        f"BF16 tie, tolerance {tie.tolerance}"
+        if tie.is_tie
+        else f"NOT A BF16 TIE (tolerance {tie.tolerance}) - investigate"
+    )
     top = ", ".join(
         f"{token}:{value:.3f}"
         for token, value in zip(divergence.top_token_ids, divergence.top_logits, strict=True)
@@ -121,9 +115,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workload-id", action="append", default=None)
     parser.add_argument("--kv-pool-tokens", type=int, default=8192)
     parser.add_argument("--runs", type=int, default=2, help="runs per workload/mode")
-    parser.add_argument(
-        "--near-tie", type=float, default=0.25, help="max logit gap labelled near-tie"
-    )
     return parser
 
 
@@ -178,9 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 deterministic = len(outputs) == 1
                 nondeterministic += not deterministic
                 actual = runs[0][request_id]
-                description = _describe(
-                    loaded, prompts[request_id], actual, references[request_id], args.near_tie
-                )
+                description = _describe(loaded, prompts[request_id], actual, references[request_id])
                 diverged += description != "aligned"
                 print(
                     f"{workload.workload_id}/{mode} {request_id}: {description}; "

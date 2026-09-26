@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from benchmarks.bench_phase2 import (
+    RequestAlignment,
     RequestLifecycleTimings,
     assert_token_alignment,
     build_phase2_record,
@@ -276,12 +277,13 @@ def test_alignment_rejects_request_specific_reference_mismatch() -> None:
 def test_build_request_results_carries_exact_reference_tokens() -> None:
     results = (SimpleNamespace(request_id="r0", output_token_ids=(1, 2)),)
 
-    records = build_request_results(results, {"r0": (1, 2)})
+    records = build_request_results(results, {"r0": RequestAlignment((1, 2), None, None, None)})
 
     assert records[0].request_id == "r0"
     assert records[0].output_token_ids == (1, 2)
     assert records[0].reference_token_ids == (1, 2)
     assert records[0].token_agreement == 1.0
+    assert records[0].first_mismatch_index is None
 
 
 def _two_request_execution(paged: Any) -> SimpleNamespace:
@@ -313,7 +315,10 @@ def _record_for(execution: Any, mode: Any) -> Phase2Record:
         warmup_runs=3,
         command=("python", "benchmarks/bench_phase2.py"),
         execution=execution,
-        references={"r0": (1, 2), "r1": (3, 4)},
+        alignments={
+            "r0": RequestAlignment((1, 2), None, None, None),
+            "r1": RequestAlignment((3, 4), None, None, None),
+        },
         git_revision="a" * 40,
         transformers_version="5.14.1",
         torch_version="2.13.0",

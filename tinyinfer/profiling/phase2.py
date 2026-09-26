@@ -19,6 +19,7 @@ PHASE2_MODES: tuple[Phase2Mode, ...] = (
     "static_batch",
     "continuous_batch",
 )
+SINGLE_REQUEST_MODES: frozenset[Phase2Mode] = frozenset({"hf_sequential", "sequential"})
 PHASE2_SCHEMA_VERSION = 2
 
 
@@ -128,22 +129,63 @@ def load_phase2_workloads(path: Path) -> dict[str, Phase2Workload]:
     return workloads
 
 
+def first_mismatch_index(actual: Sequence[int], reference: Sequence[int]) -> int | None:
+    """Return the first position where two token sequences differ, or ``None``."""
+    for index, (left, right) in enumerate(zip(actual, reference, strict=False)):
+        if left != right:
+            return index
+    if len(actual) != len(reference):
+        return min(len(actual), len(reference))
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class Phase2RequestResult:
+    """One request's tokens against its B=1 Hugging Face reference.
+
+    An aligned result matches exactly.  A diverged result is allowed only where the
+    two tokens were a BF16 tie: ``|divergence_logit_gap| <= divergence_tolerance``,
+    the tolerance being one BF16 unit at the reference's top logit.
+    ``token_agreement`` is the matching prefix length over the reference length.
+    """
+
     request_id: str
     output_token_ids: tuple[int, ...]
     reference_token_ids: tuple[int, ...]
     token_agreement: float
     first_mismatch_index: int | None
+    divergence_logit_gap: float | None
+    divergence_tolerance: float | None
 
     def __post_init__(self) -> None:
         _non_blank("request_id", self.request_id)
         validate_token_ids("output_token_ids", self.output_token_ids, allow_empty=False)
         validate_token_ids("reference_token_ids", self.reference_token_ids, allow_empty=False)
-        if self.token_agreement != 1.0:
-            raise ValueError("token_agreement must be exactly 1.0")
-        if self.first_mismatch_index is not None:
-            raise ValueError("first_mismatch_index must be None for exact agreement")
+        expected_index = first_mismatch_index(self.output_token_ids, self.reference_token_ids)
+        if self.first_mismatch_index != expected_index:
+            raise ValueError(f"first_mismatch_index must be {expected_index}")
+        if expected_index is None:
+            if self.token_agreement != 1.0:
+                raise ValueError("token_agreement must be exactly 1.0 for aligned results")
+            if self.divergence_logit_gap is not None or self.divergence_tolerance is not None:
+                raise ValueError("aligned results carry no divergence fields")
+            return
+        if expected_index >= min(len(self.output_token_ids), len(self.reference_token_ids)):
+            raise ValueError("a length difference is never a BF16 tie divergence")
+        if self.token_agreement != expected_index / len(self.reference_token_ids):
+            raise ValueError("token_agreement must equal matching prefix over reference length")
+        if self.divergence_logit_gap is None or self.divergence_tolerance is None:
+            raise ValueError("diverged results require divergence gap and tolerance")
+        gap = self.divergence_logit_gap
+        if isinstance(gap, bool) or not isinstance(gap, (int, float)) or not math.isfinite(gap):
+            raise ValueError("divergence_logit_gap must be finite")
+        tolerance = _finite_non_negative("divergence_tolerance", self.divergence_tolerance)
+        if tolerance == 0 or abs(gap) > tolerance:
+            raise ValueError("divergence_logit_gap exceeds the BF16 tie tolerance")
+
+    @property
+    def diverged(self) -> bool:
+        return self.first_mismatch_index is not None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -152,6 +194,8 @@ class Phase2RequestResult:
             "reference_token_ids": list(self.reference_token_ids),
             "token_agreement": self.token_agreement,
             "first_mismatch_index": self.first_mismatch_index,
+            "divergence_logit_gap": self.divergence_logit_gap,
+            "divergence_tolerance": self.divergence_tolerance,
         }
 
 
@@ -209,6 +253,10 @@ class Phase2Record:
             _non_blank(name, getattr(self, name))
         if self.mode not in PHASE2_MODES:
             raise ValueError("mode is invalid")
+        if self.mode in SINGLE_REQUEST_MODES and any(
+            item.diverged for item in self.request_results
+        ):
+            raise ValueError(f"{self.mode} records require exact token alignment")
         for name in (
             "repetition",
             "warmup_runs",
@@ -315,6 +363,8 @@ class Phase2Record:
                     reference_token_ids=tuple(raw["reference_token_ids"]),
                     token_agreement=raw["token_agreement"],
                     first_mismatch_index=raw["first_mismatch_index"],
+                    divergence_logit_gap=raw["divergence_logit_gap"],
+                    divergence_tolerance=raw["divergence_tolerance"],
                 )
             )
         values = dict(payload)
@@ -339,6 +389,7 @@ class Phase2Summary:
     requests_per_s_p95: float
     generated_tokens_per_s_p50: float
     generated_tokens_per_s_p95: float
+    diverged_requests: int
 
 
 def _nearest_rank(values: Sequence[float], percentile: int) -> float:
@@ -370,6 +421,9 @@ def summarize_records(records: Sequence[Phase2Record]) -> tuple[Phase2Summary, .
                 ),
                 generated_tokens_per_s_p95=_nearest_rank(
                     [item.generated_tokens_per_s for item in group], 95
+                ),
+                diverged_requests=max(
+                    sum(result.diverged for result in item.request_results) for item in group
                 ),
             )
         )

@@ -49,6 +49,7 @@ def test_renderer_includes_workload_mode_and_percentiles() -> None:
                 requests_per_s_p95=280.0,
                 generated_tokens_per_s_p50=900.0,
                 generated_tokens_per_s_p95=850.0,
+                diverged_requests=1,
             ),
         )
     )
@@ -57,6 +58,8 @@ def test_renderer_includes_workload_mode_and_percentiles() -> None:
     assert "continuous_batch" in text
     assert "300.000" in text
     assert "3.000" in text
+    assert "| 1 |" in text
+    assert "BF16 tie" in text
 
 
 def test_complete_groups_require_exactly_five_unique_repetitions() -> None:

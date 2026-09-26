@@ -40,11 +40,13 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
         "# G2-P1 Performance Summary",
         "",
         "Throughput uses the workload makespan (first submission to last finish). "
-        "TTFT and TPOT are medians across repetitions of each run's request median.",
+        "TTFT and TPOT are medians across repetitions of each run's request median. "
+        "Diverged counts requests whose tokens left the B=1 reference at a BF16 tie "
+        "(both tokens within one BF16 unit of the top logit); only batched modes allow it.",
         "",
         "| Workload | Mode | Repetitions | Req/s p50 | Req/s p95 | Tok/s p50 | Tok/s p95 "
-        "| Makespan p50 ms | Makespan p95 ms | TTFT p50 ms | TPOT p50 ms |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Makespan p50 ms | Makespan p95 ms | TTFT p50 ms | TPOT p50 ms | Diverged |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for summary in summaries:
         lines.append(
@@ -53,7 +55,8 @@ def render_markdown(summaries: tuple[Phase2Summary, ...]) -> str:
             f"{summary.generated_tokens_per_s_p50:.3f} | "
             f"{summary.generated_tokens_per_s_p95:.3f} | "
             f"{summary.makespan_p50_ms:.3f} | {summary.makespan_p95_ms:.3f} | "
-            f"{summary.ttft_p50_ms:.3f} | {summary.tpot_p50_ms:.3f} |"
+            f"{summary.ttft_p50_ms:.3f} | {summary.tpot_p50_ms:.3f} | "
+            f"{summary.diverged_requests} |"
         )
     return "\n".join(lines) + "\n"
 

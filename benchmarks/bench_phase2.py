@@ -9,12 +9,14 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import math
 import os
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from math import ceil
 from pathlib import Path
 from typing import Any
@@ -27,11 +29,13 @@ from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import (
     PHASE2_MODES,
     PHASE2_SCHEMA_VERSION,
+    SINGLE_REQUEST_MODES,
     Phase2Mode,
     Phase2Record,
     Phase2Request,
     Phase2RequestResult,
     Phase2Workload,
+    first_mismatch_index,
     load_phase2_workloads,
 )
 from tinyinfer.runtime.generation import generate_greedy, reference_generate
@@ -266,14 +270,136 @@ def run_hf_sequential_workload(
     return WorkloadExecution(results=results, timings=timings, paged=None)
 
 
-def first_mismatch_index(actual: Sequence[int], reference: Sequence[int]) -> int | None:
-    """Return the first position where two token sequences differ, or ``None``."""
-    for index, (left, right) in enumerate(zip(actual, reference, strict=False)):
-        if left != right:
-            return index
-    if len(actual) != len(reference):
-        return min(len(actual), len(reference))
-    return None
+def bf16_ulp(value: float) -> float:
+    """Spacing between adjacent bfloat16 values at ``value`` (8-bit significand)."""
+    magnitude = abs(value)
+    if magnitude == 0:
+        return 0.0
+    return float(2.0 ** (math.floor(math.log2(magnitude)) - 7))
+
+
+@dataclass(frozen=True, slots=True)
+class TieCheck:
+    """Whether two tokens were indistinguishable at BF16 precision at one step."""
+
+    is_tie: bool
+    logit_gap: float
+    tolerance: float
+
+
+def bf16_tie(logits: Any, *, reference_token: int, actual_token: int) -> TieCheck:
+    """Both tokens must lie within one BF16 unit of the step's highest logit."""
+    row = logits.float()
+    top = float(row.max())
+    reference = float(row[reference_token])
+    actual = float(row[actual_token])
+    tolerance = bf16_ulp(top)
+    return TieCheck(
+        is_tie=max(top - reference, top - actual) <= tolerance,
+        logit_gap=reference - actual,
+        tolerance=tolerance,
+    )
+
+
+def reference_logits_at(loaded: Any, prompt: str, prefix: Sequence[int]) -> Any:
+    """Recompute the B=1 next-token logits after ``prompt`` plus ``prefix``."""
+    import torch
+
+    encoded = loaded.tokenizer(prompt, return_tensors="pt", add_special_tokens=True)
+    device = loaded.model.device
+    prompt_ids = encoded["input_ids"].to(device)
+    generated = torch.tensor([list(prefix)], dtype=torch.long, device=device)
+    input_ids = torch.cat([prompt_ids, generated], dim=1)
+    with torch.inference_mode():
+        outputs = loaded.model(
+            input_ids=input_ids, attention_mask=torch.ones_like(input_ids), use_cache=False
+        )
+    return outputs.logits[0, -1]
+
+
+@dataclass(frozen=True, slots=True)
+class RequestAlignment:
+    """A request's reference tokens and, if it diverged, the accepted BF16 tie."""
+
+    reference: tuple[int, ...]
+    first_mismatch_index: int | None
+    logit_gap: float | None
+    tolerance: float | None
+
+
+TieChecker = Callable[[str, tuple[int, ...], tuple[int, ...], int], TieCheck]
+
+
+def _prompt_logits_at(
+    loaded: Any, prompts: dict[str, str], request_id: str, prefix: tuple[int, ...]
+) -> Any:
+    return reference_logits_at(loaded, prompts[request_id], prefix)
+
+
+def make_tie_checker(logits_at: Callable[[str, tuple[int, ...]], Any]) -> TieChecker:
+    """Build a caching ``TieChecker`` from a ``(request_id, prefix) -> logits`` source.
+
+    Divergences are deterministic across repetitions, so each distinct divergence
+    costs one extra reference forward at most.
+    """
+    cache: dict[tuple[str, int, int], TieCheck] = {}
+
+    def tie_check(
+        request_id: str, reference: tuple[int, ...], actual: tuple[int, ...], index: int
+    ) -> TieCheck:
+        key = (request_id, index, actual[index])
+        if key not in cache:
+            cache[key] = bf16_tie(
+                logits_at(request_id, reference[:index]),
+                reference_token=reference[index],
+                actual_token=actual[index],
+            )
+        return cache[key]
+
+    return tie_check
+
+
+def check_token_alignment(
+    results: Sequence[Any],
+    reference_tokens: Callable[[str], tuple[int, ...]],
+    *,
+    mode: Phase2Mode,
+    tie_check: TieChecker,
+    context: str = "",
+) -> dict[str, RequestAlignment]:
+    """Accept exact alignment, or a batched-mode divergence at a BF16 tie.
+
+    Single-request modes must match the reference exactly.  Batched modes run
+    different GEMM shapes, so a greedy tie may break the other way; that is
+    accepted only when ``tie_check`` confirms both tokens were within one BF16 unit
+    of the top logit.  Any other divergence aborts the run.
+    """
+    prefix = f"{context}: " if context else ""
+    alignments: dict[str, RequestAlignment] = {}
+    for result in results:
+        request_id = result.request_id
+        actual = tuple(result.output_token_ids)
+        reference = reference_tokens(request_id)
+        index = first_mismatch_index(actual, reference)
+        if index is None:
+            alignments[request_id] = RequestAlignment(reference, None, None, None)
+            continue
+        where = f"{prefix}token mismatch for {request_id} at index {index}"
+        if mode in SINGLE_REQUEST_MODES:
+            raise RuntimeError(
+                f"{where} in single-request mode: TinyInfer={actual}, HuggingFace={reference}"
+            )
+        if index >= min(len(actual), len(reference)):
+            raise RuntimeError(
+                f"{where}: output length differs ({len(actual)} vs {len(reference)})"
+            )
+        tie = tie_check(request_id, reference, actual, index)
+        if not tie.is_tie:
+            raise RuntimeError(
+                f"{where}: logit gap {tie.logit_gap} exceeds BF16 tie tolerance {tie.tolerance}"
+            )
+        alignments[request_id] = RequestAlignment(reference, index, tie.logit_gap, tie.tolerance)
+    return alignments
 
 
 def assert_token_alignment(
@@ -300,25 +426,25 @@ def assert_token_alignment(
 
 
 def build_request_results(
-    results: Sequence[Any], references: dict[str, tuple[int, ...]]
+    results: Sequence[Any], alignments: dict[str, RequestAlignment]
 ) -> tuple[Phase2RequestResult, ...]:
-    """Convert aligned runtime outputs to immutable raw-record request entries."""
+    """Convert checked runtime outputs to immutable raw-record request entries."""
     entries: list[Phase2RequestResult] = []
     for result in results:
         try:
-            reference = references[result.request_id]
+            alignment = alignments[result.request_id]
         except KeyError as error:
-            raise RuntimeError(f"missing reference tokens for {result.request_id}") from error
-        actual = tuple(result.output_token_ids)
-        if actual != reference:
-            raise RuntimeError(f"unaligned result for {result.request_id}")
+            raise RuntimeError(f"missing alignment for {result.request_id}") from error
+        index = alignment.first_mismatch_index
         entries.append(
             Phase2RequestResult(
                 request_id=result.request_id,
-                output_token_ids=actual,
-                reference_token_ids=reference,
-                token_agreement=1.0,
-                first_mismatch_index=None,
+                output_token_ids=tuple(result.output_token_ids),
+                reference_token_ids=alignment.reference,
+                token_agreement=1.0 if index is None else index / len(alignment.reference),
+                first_mismatch_index=index,
+                divergence_logit_gap=alignment.logit_gap,
+                divergence_tolerance=alignment.tolerance,
             )
         )
     return tuple(entries)
@@ -339,7 +465,7 @@ def build_phase2_record(
     warmup_runs: int,
     command: tuple[str, ...],
     execution: Any,
-    references: dict[str, tuple[int, ...]],
+    alignments: dict[str, RequestAlignment],
     git_revision: str,
     transformers_version: str,
     torch_version: str,
@@ -348,7 +474,7 @@ def build_phase2_record(
     peak_reserved_bytes: int,
 ) -> Phase2Record:
     """Build one schema-validated raw benchmark record from a completed workload."""
-    request_results = build_request_results(execution.results, references)
+    request_results = build_request_results(execution.results, alignments)
     measurements = [
         execution.timings.measurement(item.request_id, output_tokens=len(item.output_token_ids))
         for item in request_results
@@ -525,17 +651,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             request_id: reference_generate(loaded, request)
             for request_id, request in requests.items()
         }
+        prompts = {request_id: request.prompt for request_id, request in requests.items()}
+        tie_check = make_tie_checker(partial(_prompt_logits_at, loaded, prompts))
         for mode in modes:
-            context = f"{workload.workload_id}/{mode}"
+            check = partial(
+                check_token_alignment,
+                reference_tokens=references.__getitem__,
+                mode=mode,
+                tie_check=tie_check,
+                context=f"{workload.workload_id}/{mode}",
+            )
             for _ in range(args.warmup_runs):
-                execution = run(workload, mode)
-                assert_token_alignment(execution.results, references.__getitem__, context=context)
+                check(run(workload, mode).results)
             for repetition in range(args.repetitions):
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
                 execution = run(workload, mode)
-                assert_token_alignment(execution.results, references.__getitem__, context=context)
                 torch.cuda.synchronize()
+                # Read memory before any tie-check forward can raise the peak.
+                peak_allocated = int(torch.cuda.max_memory_allocated())
+                peak_reserved = int(torch.cuda.max_memory_reserved())
+                alignments = check(execution.results)
                 records.append(
                     build_phase2_record(
                         loaded=loaded,
@@ -545,13 +681,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         warmup_runs=args.warmup_runs,
                         command=command,
                         execution=execution,
-                        references=references,
+                        alignments=alignments,
                         git_revision=_git_revision(),
                         transformers_version=importlib.metadata.version("transformers"),
                         torch_version=torch.__version__,
                         device_name=torch.cuda.get_device_name(),
-                        peak_allocated_bytes=int(torch.cuda.max_memory_allocated()),
-                        peak_reserved_bytes=int(torch.cuda.max_memory_reserved()),
+                        peak_allocated_bytes=peak_allocated,
+                        peak_reserved_bytes=peak_reserved,
                     )
                 )
     write_phase2_records_atomic(records, args.output, overwrite=args.overwrite)

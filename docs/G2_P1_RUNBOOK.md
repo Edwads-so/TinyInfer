@@ -67,6 +67,19 @@ partial JSONL as evidence.
 more than the 256-block default derived from `max_sequence_length`. The CLI checks every
 workload/mode against the pool before running and fails fast if it is too small.
 
+## Correctness rule
+
+- `hf_sequential` and `sequential` (B=1) must match the Hugging Face B=1 reference exactly.
+- `static_batch` and `continuous_batch` must match exactly, **or** diverge only where the
+  reference's top token and TinyInfer's token are both within one BF16 unit of that
+  step's highest logit (a BF16 tie). Different batch shapes select different GEMM
+  kernels, so such a tie can break the other way; the 2026-09-26 diagnosis found
+  exactly this for `short_zh` at step 23 (both logits 21.000).
+- Any other divergence aborts the run. Accepted divergences are written into each
+  request result (`first_mismatch_index`, `divergence_logit_gap`,
+  `divergence_tolerance`) and counted in the summary's `Diverged` column.
+- `benchmarks/diagnose_alignment.py` explains every divergence without writing evidence.
+
 ## Measurement definitions (record schema v2)
 
 - Latency is measured from **submission**, so queueing time counts toward TTFT and
