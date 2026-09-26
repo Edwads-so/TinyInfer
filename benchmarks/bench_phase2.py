@@ -542,10 +542,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def submission_schedule(
     workload: Phase2Workload, *, mode: Phase2Mode
 ) -> tuple[tuple[Phase2Request, int], ...]:
@@ -566,3 +562,7 @@ def submission_schedule(
             raise ValueError("static_batch requires arrival_iteration 0 for every request")
         return tuple((request, 0) for request in ordered)
     raise ValueError(f"unsupported mode: {mode}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

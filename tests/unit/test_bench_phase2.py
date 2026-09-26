@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,16 @@ from benchmarks.bench_phase2 import (
 from tinyinfer.config import EngineConfig
 from tinyinfer.profiling.phase2 import Phase2Record, Phase2Request, Phase2Workload
 from tinyinfer.runtime.result import GenerationResult
+
+
+def test_main_guard_is_the_last_statement() -> None:
+    # Running the file as a script executes main() at the guard, so anything defined
+    # after it is missing at runtime even though imports in tests see it.
+    tree = ast.parse(Path("benchmarks/bench_phase2.py").read_text(encoding="utf-8"))
+    last = tree.body[-1]
+
+    assert isinstance(last, ast.If)
+    assert ast.unparse(last.test) == "__name__ == '__main__'"
 
 
 def _fixed_workload() -> Phase2Workload:
