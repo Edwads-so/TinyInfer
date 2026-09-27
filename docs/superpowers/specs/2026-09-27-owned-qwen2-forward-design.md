@@ -122,8 +122,9 @@ class KVCache(Protocol):
 
 - `update` 写入本层新 K/V，返回该层完整 K/V；`commit` 在最后一层之后统一推进长度，与现有
   `ContiguousKVCache` 的"所有层写完才提交"语义一致。
-- 连续实现包装现有 `tinyinfer/cache/contiguous.py`，按请求实际需要的长度分配，不再按
-  `max_position_embeddings`（32768）预分配。
+- 连续实现 `ContiguousKV` 按请求实际需要的长度分配，不再按 `max_position_embeddings`（32768）
+  预分配。（实现时改为新写，而非包装 `tinyinfer/cache/contiguous.py`：后者只支持 B=1，且 prefill
+  时逐层就修改长度，与"所有层写完才提交"不一致。）
 - 阶段 C 提供 paged 实现，模型代码不变。
 
 ### 4.6 `Qwen2Model.forward`
@@ -138,8 +139,11 @@ def forward(
 ) -> ForwardOutput:             # logits [B, T, V]；可选每层 hidden states
 ```
 
-- `capture_hidden=True` 时返回 embedding 输出与每一层输出，共 25 个张量，用于逐层对齐。它和
-  Hugging Face `output_hidden_states=True` 的约定一一对应。
+- `capture_hidden=True` 时返回 embedding 输出与每一层输出，共 25 个张量，另有经过最终 norm 的
+  `final_hidden`，用于逐层对齐。Hugging Face `output_hidden_states=True` 返回 25 个张量，但最后一个
+  是最终 norm 之后的结果，测试按此对应。
+- `trace(name, tensor)` 回调在每一步记录张量，默认关闭、不改变计算；`docs/QWEN2_SHAPES.md` 由它在
+  meta device 上生成。
 - 本阶段只测 B=1 与等长 B>1；接口已为异长 batch 保留 `position_ids` 与 `attention_mask`。
 
 ### 4.7 `generate.py`
