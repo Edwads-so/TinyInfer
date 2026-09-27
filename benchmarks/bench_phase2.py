@@ -642,6 +642,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             loaded, config, workload, mode=mode, pool_tokens=pool_tokens
         )
 
+    total_groups = sum(len(modes) for _, modes in plan)
+    finished_groups = 0
+    print(
+        f"G2-P1 BENCHMARK: {total_groups} workload/mode groups, "
+        f"{args.warmup_runs} warm-up + {args.repetitions} measured runs each",
+        flush=True,
+    )
     for workload, modes in plan:
         requests = {
             item.request_id: GenerationRequest(item.request_id, item.prompt, item.max_new_tokens)
@@ -690,6 +697,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                         peak_reserved_bytes=peak_reserved,
                     )
                 )
+            finished_groups += 1
+            group = records[-args.repetitions :]
+            tokens_per_s = sorted(record.generated_tokens_per_s for record in group)
+            diverged = max(sum(item.diverged for item in r.request_results) for r in group)
+            print(
+                f"[{finished_groups}/{total_groups}] {workload.workload_id}/{mode}: "
+                f"median {tokens_per_s[len(tokens_per_s) // 2]:.1f} tok/s, "
+                f"diverged {diverged}",
+                flush=True,
+            )
     write_phase2_records_atomic(records, args.output, overwrite=args.overwrite)
     print(f"G2-P1 BENCHMARK: wrote {len(records)} records to {args.output}")
     return 0
