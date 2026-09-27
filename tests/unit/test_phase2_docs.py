@@ -24,7 +24,18 @@ def test_phase2_docs_state_checkpoint_boundaries() -> None:
     beginner = (ROOT / "docs" / "BEGINNER_GUIDE.md").read_text(encoding="utf-8")
 
     assert "G2-BD: local candidate" in status
-    assert "G2-P1: not started" in status
+    assert "G2-P1: verified locally" in status
     assert "G2-P2: not started" in status
     assert "full G2: not passed" in status
     assert "true batched decode: not verified" not in beginner
+    assert "G2-P1: not started" not in beginner
+
+
+def test_g2_p1_report_cites_its_evidence() -> None:
+    report = (ROOT / "docs" / "G2_P1_REPORT.md").read_text(encoding="utf-8")
+
+    assert "31e2953bc788f03eea60c69c49800ca6de1e99d7" in report
+    assert "docs/results/g2_p1_raw.jsonl" in report
+    assert "G2-P2: not started" in report
+    assert "full G2: not passed" in report
+    assert "block-native paged attention: not implemented" in report

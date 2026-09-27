@@ -1,6 +1,10 @@
 # G2 Completion Audit
 
 > Audit date: 2026-09-18. Status: G2 is **not passed**.
+>
+> Update 2026-09-27: required actions 1–3 below are complete for G2-P1, which is now
+> verified locally at `31e2953` (`docs/G2_P1_REPORT.md`). This audit is otherwise kept
+> as the 2026-09-18 snapshot.
 
 ## Evidence available on `codex/g2-p1-throughput`
 

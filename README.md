@@ -38,7 +38,7 @@ Phase 2 capabilities are under active development and are NOT production-ready:
 - `FCFS scheduler`: iteration-interleaving prototype
 - `true batched decode`: local candidate; native-WSL correctness and audit remediation passed (remote CI status must be checked on the declared commit)
 - `block-native paged attention`: not implemented
-- `G2-P1` batching-throughput evidence: not started
+- `G2-P1` batching-throughput evidence: verified locally (baseline; see `docs/G2_P1_REPORT.md`)
 - `G2-P2` paged-KV memory-efficiency evidence: not started
 - `full G2`: not passed
 

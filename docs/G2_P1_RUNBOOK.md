@@ -1,6 +1,7 @@
 # G2-P1 GPU Runbook
 
-> Status: `not yet executed` — this document is an execution handoff, not performance evidence.
+> Status: executed at `31e2953` on 2026-09-27 — results in `docs/G2_P1_REPORT.md`.
+> This document is an execution handoff, not performance evidence.
 
 ## Purpose
 

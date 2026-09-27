@@ -805,7 +805,7 @@ Python 的 duck typing —— "如果它走路像鸭子，叫起来像鸭子，�
 > - FCFS scheduler 是 **iteration-interleaving 原型**，并且 true batched decode
 >   为 **G2-BD local candidate**：原生 WSL correctness 与两轮 audit remediation
 >   已通过，仍需按声明提交核验 remote CI 状态；
-> - `G2-P1: not started`（batching throughput evidence）；
+> - `G2-P1: verified locally`（batching throughput evidence，见 `docs/G2_P1_REPORT.md`）；
 > - `G2-P2: not started`（paged-KV memory-efficiency evidence）；
 > - `block-native paged attention: not implemented`（当前用 dense 左填充 gather）；
 > - `full G2: not passed`。

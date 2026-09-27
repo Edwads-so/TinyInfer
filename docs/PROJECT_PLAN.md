@@ -33,7 +33,7 @@ generation control, profiling, scheduling, KV allocation, block tables, and atte
 | G0 / G0.5 engineering and GPU environment | passed |
 | G1 Hugging Face reference runtime | passed |
 | G2-BD true heterogeneous batched decode | local candidate |
-| G2-P1 batching-throughput evidence | implemented, not executed |
+| G2-P1 batching-throughput evidence | verified locally (2026-09-27, `docs/G2_P1_REPORT.md`) |
 | G3 owned Qwen2 forward | not started |
 | G2-P2 paged memory evidence | not started |
 | G4 Triton kernel | not started |
