@@ -30,6 +30,22 @@ class Qwen2Spec:
         return self.num_heads // self.num_kv_heads
 
 
+QWEN25_05B = Qwen2Spec(
+    vocab_size=151936,
+    hidden_size=896,
+    intermediate_size=4864,
+    num_layers=24,
+    num_heads=14,
+    num_kv_heads=2,
+    head_dim=64,
+    rms_norm_eps=1e-6,
+    rope_theta=1000000.0,
+    max_position_embeddings=32768,
+    tie_word_embeddings=True,
+)
+"""Qwen/Qwen2.5-0.5B as published; the GPU test checks it against the cached config."""
+
+
 def _rope_theta(config: dict[str, Any]) -> float:
     # Transformers 5.x writes ``rope_parameters``; older hub files use top-level keys.
     parameters = config.get("rope_parameters")

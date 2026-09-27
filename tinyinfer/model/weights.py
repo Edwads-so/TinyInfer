@@ -66,7 +66,8 @@ def resolve_model_dir(model_id: str, revision: str) -> Path:
         ) from error
 
 
-def _expected_shapes(spec: Qwen2Spec) -> dict[str, tuple[int, ...]]:
+def checkpoint_shapes(spec: Qwen2Spec) -> dict[str, tuple[int, ...]]:
+    """Every checkpoint tensor name and the shape ``spec`` requires for it."""
     shapes: dict[str, tuple[int, ...]] = {
         "model.embed_tokens.weight": (spec.vocab_size, spec.hidden_size),
         "model.norm.weight": (spec.hidden_size,),
@@ -102,7 +103,7 @@ def load_qwen2_weights(
 
     model_dir = Path(model_dir)
     files = _checkpoint_files(model_dir)
-    expected = _expected_shapes(spec)
+    expected = checkpoint_shapes(spec)
     missing = sorted(set(expected) - set(files))
     unexpected = sorted(set(files) - set(expected))
     if missing or unexpected:
@@ -125,6 +126,23 @@ def load_qwen2_weights(
                     )
                 tensors[name] = tensor.to(device=device, dtype=dtype)
 
+    return _assemble(spec, tensors)
+
+
+def empty_qwen2_weights(spec: Qwen2Spec, *, device: Any, dtype: Any) -> Qwen2Weights:
+    """Uninitialized weights with checkpoint shapes; on ``meta`` they only carry shapes."""
+    import torch
+
+    return _assemble(
+        spec,
+        {
+            name: torch.empty(shape, device=device, dtype=dtype)
+            for name, shape in checkpoint_shapes(spec).items()
+        },
+    )
+
+
+def _assemble(spec: Qwen2Spec, tensors: dict[str, Any]) -> Qwen2Weights:
     layers = tuple(
         Qwen2LayerWeights(
             **{

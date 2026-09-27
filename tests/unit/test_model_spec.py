@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from tinyinfer.model.spec import Qwen2Spec, load_qwen2_spec
+from tinyinfer.model.spec import QWEN25_05B, load_qwen2_spec
 
 # Values as published in the Qwen2.5-0.5B config.json (pre-5.x layout).
 HUB_CONFIG: dict[str, Any] = {
@@ -36,19 +36,7 @@ def _write(tmp_path: Path, config: dict[str, Any]) -> Path:
 def test_hub_layout_parses_qwen25_05b_shapes(tmp_path: Path) -> None:
     spec = load_qwen2_spec(_write(tmp_path, HUB_CONFIG))
 
-    assert spec == Qwen2Spec(
-        vocab_size=151936,
-        hidden_size=896,
-        intermediate_size=4864,
-        num_layers=24,
-        num_heads=14,
-        num_kv_heads=2,
-        head_dim=64,
-        rms_norm_eps=1e-6,
-        rope_theta=1000000.0,
-        max_position_embeddings=32768,
-        tie_word_embeddings=True,
-    )
+    assert spec == QWEN25_05B
     assert spec.num_kv_groups == 7
 
 

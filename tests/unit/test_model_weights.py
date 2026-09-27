@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,12 @@ import torch
 from safetensors.torch import load_file, save_file
 
 from tinyinfer.model.spec import load_qwen2_spec
-from tinyinfer.model.weights import load_qwen2_weights, resolve_model_dir
+from tinyinfer.model.weights import (
+    checkpoint_shapes,
+    empty_qwen2_weights,
+    load_qwen2_weights,
+    resolve_model_dir,
+)
 
 
 def _copy_checkpoint(source: Path, target: Path, tensors: dict[str, torch.Tensor]) -> Path:
@@ -100,6 +106,24 @@ def test_sharded_checkpoint_loads(tiny_qwen2: Any, tmp_path: Path) -> None:
     )
 
     torch.testing.assert_close(weights.embed, tensors["model.embed_tokens.weight"])
+
+
+def test_empty_weights_share_the_loaders_shapes(tiny_qwen2: Any) -> None:
+    spec = load_qwen2_spec(tiny_qwen2.model_dir)
+    loaded = load_qwen2_weights(
+        tiny_qwen2.model_dir, spec, device=torch.device("cpu"), dtype=torch.float32
+    )
+
+    empty = empty_qwen2_weights(spec, device=torch.device("meta"), dtype=torch.bfloat16)
+
+    assert empty.embed.device.type == "meta"
+    assert empty.lm_head is empty.embed
+    assert empty.layers[1].k_bias.shape == loaded.layers[1].k_bias.shape
+    assert empty.layers[0].down_proj.shape == loaded.layers[0].down_proj.shape
+    # parameters() yields the tied embedding once, matching the checkpoint's key set.
+    assert sum(math.prod(shape) for shape in checkpoint_shapes(spec).values()) == sum(
+        parameter.numel() for parameter in tiny_qwen2.hf_model.parameters()
+    )
 
 
 def test_resolve_model_dir_never_downloads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

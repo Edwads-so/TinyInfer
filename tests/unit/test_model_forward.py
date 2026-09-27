@@ -95,6 +95,24 @@ def test_left_padded_row_matches_unpadded_request(tiny_qwen2: Any) -> None:
     )
 
 
+def test_trace_reports_every_step_without_changing_logits(tiny_qwen2: Any) -> None:
+    model = _owned(tiny_qwen2)
+    seen: list[tuple[str, tuple[int, ...]]] = []
+
+    traced = model.forward(
+        PROMPT, _positions(PROMPT), trace=lambda name, t: seen.append((name, tuple(t.shape)))
+    )
+
+    assert torch.equal(traced.logits, model.forward(PROMPT, _positions(PROMPT)).logits)
+    names = [name for name, _ in seen]
+    assert names[:3] == ["embedding", "rope.cos", "rope.sin"]
+    assert names[-2:] == ["final_norm", "logits"]
+    assert names.count("layer.attention") == 2
+    assert ("layer.q", (1, 4, 7, 16)) in seen
+    assert ("layer.k", (1, 2, 7, 16)) in seen
+    assert ("logits", (1, 7, 128)) in seen
+
+
 def test_forward_rejects_mismatched_positions(tiny_qwen2: Any) -> None:
     model = _owned(tiny_qwen2)
 
