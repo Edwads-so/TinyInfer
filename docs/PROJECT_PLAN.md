@@ -26,7 +26,7 @@ generation control, profiling, scheduling, KV allocation, block tables, and atte
   Hugging Face reference → Hugging Face model with dense-gather paged adapter (current)
   → owned model with vectorized gather → owned model with a Triton paged kernel.
 
-## Status (2026-09-26)
+## Status (2026-09-28)
 
 | Checkpoint | Status |
 |---|---|
@@ -34,7 +34,7 @@ generation control, profiling, scheduling, KV allocation, block tables, and atte
 | G1 Hugging Face reference runtime | passed |
 | G2-BD true heterogeneous batched decode | local candidate |
 | G2-P1 batching-throughput evidence | verified locally (2026-09-27, `docs/G2_P1_REPORT.md`) |
-| G3 owned Qwen2 forward | not started |
+| G3 owned Qwen2 forward | verified locally (2026-09-28: 9/9 GPU gate tests; 85 of 104 checkpoints bit-identical) |
 | G2-P2 paged memory evidence | not started |
 | G4 Triton kernel | not started |
 
