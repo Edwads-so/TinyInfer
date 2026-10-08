@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
+
+import torch
 
 from tinyinfer.cache.batched_paged_tinyinfer_cache import BatchedPagedTinyinferCache
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
 from tinyinfer.cache.request_state import PagedRequestState
+from tinyinfer.model.paged import PagedKVPool, PagedSequence
+from tinyinfer.model.qwen2 import Qwen2Model
 from tinyinfer.runtime.generation import _select_next_token, _select_next_tokens
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
@@ -127,3 +132,62 @@ class HFPagedBackend:
 
     def decode_text(self, tokens: Sequence[int]) -> str:
         return str(self.loaded.tokenizer.decode(list(tokens), skip_special_tokens=True))
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedHandle:
+    """A request's paged sequence plus its tokenized prompt (tokenized once, at open)."""
+
+    sequence: PagedSequence
+    prompt_ids: tuple[int, ...]
+
+
+class OwnedPagedBackend:
+    """TinyInfer's own Qwen2 forward pass on the slot-addressed paged pool."""
+
+    def __init__(
+        self, model: Qwen2Model, tokenizer: Any, pool: PagedKVPool, *, eos_token_id: int
+    ) -> None:
+        self.model = model
+        self.tokenizer = tokenizer
+        self.pool = pool
+        self._eos_token_id = eos_token_id
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._eos_token_id
+
+    def open(self, request: GenerationRequest) -> OwnedHandle:
+        encoded = self.tokenizer(request.prompt, return_tensors="pt", add_special_tokens=True)
+        prompt_ids = tuple(int(token) for token in encoded["input_ids"][0].tolist())
+        sequence = self.pool.open(
+            request.request_id, max_tokens=len(prompt_ids) + request.max_new_tokens
+        )
+        return OwnedHandle(sequence=sequence, prompt_ids=prompt_ids)
+
+    def prefill(
+        self, request: GenerationRequest, handle: OwnedHandle
+    ) -> tuple[tuple[int, ...], int]:
+        view = self.pool.batch([handle.sequence], new_tokens=len(handle.prompt_ids))
+        input_ids = torch.tensor([handle.prompt_ids], device=self.model.device)
+        logits = self.model.forward(
+            input_ids, view.position_ids, kv=view, attention_mask=view.mask
+        ).logits
+        return handle.prompt_ids, int(logits[0, -1].argmax())
+
+    def decode(self, handles: Sequence[OwnedHandle], last_tokens: Sequence[int]) -> list[int]:
+        view = self.pool.batch([handle.sequence for handle in handles], new_tokens=1)
+        input_ids = torch.tensor([[token] for token in last_tokens], device=self.model.device)
+        logits = self.model.forward(
+            input_ids, view.position_ids, kv=view, attention_mask=view.mask
+        ).logits
+        return [int(token) for token in logits[:, -1].argmax(dim=-1).tolist()]
+
+    def seq_length(self, handle: OwnedHandle) -> int:
+        return handle.sequence.length
+
+    def release(self, handle: OwnedHandle) -> None:
+        self.pool.release(handle.sequence)
+
+    def decode_text(self, tokens: Sequence[int]) -> str:
+        return str(self.tokenizer.decode(list(tokens), skip_special_tokens=True))
