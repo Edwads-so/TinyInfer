@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from tinyinfer.cache.request_state import PagedRequestState
 from tinyinfer.runtime.request import GenerationRequest
 
 
 @dataclass(slots=True)
 class EngineRequestState:
-    """Per-request runtime state owned by the batch engine."""
+    """Per-request runtime state owned by the batch engine.
+
+    ``cache`` is the backend's opaque handle for this request's KV storage.
+    """
 
     request: GenerationRequest
-    cache: PagedRequestState
+    cache: Any
     prompt_token_ids: tuple[int, ...]
     output_token_ids: list[int] = field(default_factory=list)
 

@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
 from typing import Any, Protocol
 
-from tinyinfer.cache.batched_paged_tinyinfer_cache import BatchedPagedTinyinferCache
 from tinyinfer.cache.paged import PagedKVCache
-from tinyinfer.cache.paged_tinyinfer_cache import PagedTinyinferCache
-from tinyinfer.cache.request_state import PagedRequestState
-from tinyinfer.runtime.generation import _select_next_token, _select_next_tokens
 from tinyinfer.runtime.hf_loader import LoadedModel
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult, StopReason
+from tinyinfer.scheduler.backends import DecodeBackend, HFPagedBackend
 from tinyinfer.scheduler.queue import RequestQueue
 from tinyinfer.scheduler.state import EngineRequestState, IterationStats
 
@@ -42,13 +38,16 @@ _NO_OP_OBSERVER = _NoOpBatchEngineObserver()
 
 
 class BatchEngine:
-    """FCFS scheduler + batched paged KV decode.
+    """FCFS scheduler over a ``DecodeBackend``.
 
     One ``step()`` iteration:
 
-    1. Admit waiting requests (allocate block tables + prefill serially).
-    2. Build one batched decode forward over all running requests.
-    3. Complete finished requests and release their blocks.
+    1. Admit waiting requests (reserve KV storage + prefill serially).
+    2. Run one batched decode forward over all running requests.
+    3. Complete finished requests and release their KV storage.
+
+    ``BatchEngine(loaded, paged)`` uses the Hugging Face paged backend (the G2-P1
+    baseline); ``BatchEngine.from_backend`` accepts any backend.
     """
 
     def __init__(
@@ -61,11 +60,28 @@ class BatchEngine:
     ) -> None:
         self._loaded = loaded
         self._paged = paged
+        self._setup(HFPagedBackend(loaded, paged), max_batch, observer)
+
+    @classmethod
+    def from_backend(
+        cls,
+        backend: DecodeBackend,
+        *,
+        max_batch: int = 8,
+        observer: BatchEngineObserver | None = None,
+    ) -> BatchEngine:
+        engine = cls.__new__(cls)
+        engine._setup(backend, max_batch, observer)
+        return engine
+
+    def _setup(
+        self, backend: DecodeBackend, max_batch: int, observer: BatchEngineObserver | None
+    ) -> None:
+        self._backend = backend
         self._max_batch = max_batch
         self._queue = RequestQueue()
         self._requests: dict[str, GenerationRequest] = {}
         self._states: dict[str, EngineRequestState] = {}
-        self._torch = importlib.import_module("torch")
         self._iteration = 0
         self._history: tuple[IterationStats, ...] = ()
         self._observer = observer if observer is not None else _NO_OP_OBSERVER
@@ -124,7 +140,9 @@ class BatchEngine:
 
             running = list(self._queue.running_requests)
             running_ids = [r.request_id for r in running]
-            old_lengths = tuple(self._states[rid].cache.seq_length for rid in running_ids)
+            old_lengths = tuple(
+                self._backend.seq_length(self._states[rid].cache) for rid in running_ids
+            )
 
             if running_ids:
                 self._decode_batch(running_ids)
@@ -226,85 +244,31 @@ class BatchEngine:
 
     def _init_request_state(self, req_id: str) -> None:
         req = self._requests[req_id]
-        max_tokens = len(self._loaded.tokenizer.encode(req.prompt)) + req.max_new_tokens
-        block_table = self._paged.create_block_table(max_tokens)
-        blocks_needed = block_table.logical_blocks_used(max_tokens, self._paged.block_size)
-        self._paged.allocate_blocks(block_table, blocks_needed)
-        paged_state = PagedRequestState(
-            request_id=req_id,
-            block_table=block_table,
-            seq_length=0,
-            blocks_allocated=blocks_needed,
-        )
         self._states[req_id] = EngineRequestState(
             request=req,
-            cache=paged_state,
+            cache=self._backend.open(req),
             prompt_token_ids=(),
         )
 
     def _prefill_request(self, req_id: str) -> None:
-        req = self._requests[req_id]
         st = self._states[req_id]
-        encoded = self._loaded.tokenizer(req.prompt, return_tensors="pt", add_special_tokens=True)
-        input_ids = encoded["input_ids"].to(self._loaded.model.device)
-        attention_mask = encoded["attention_mask"].to(self._loaded.model.device)
-        cache = PagedTinyinferCache(self._paged, st.cache)
-        with self._torch.inference_mode():
-            outputs = self._loaded.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                past_key_values=cache,
-                use_cache=True,
-                return_dict=True,
-            )
-        st.prompt_token_ids = tuple(int(t) for t in input_ids[0].tolist())
-        st.output_token_ids = [_select_next_token(outputs.logits)]
+        st.prompt_token_ids, first_token = self._backend.prefill(st.request, st.cache)
+        st.output_token_ids = [first_token]
 
     def _decode_batch(self, running_ids: list[str]) -> None:
         """Run exactly one forward over all running requests."""
         states = [self._states[rid] for rid in running_ids]
-        cache_states = tuple(st.cache for st in states)
-        old_lengths = tuple(st.cache.seq_length for st in states)
-        batch = len(states)
-
-        input_ids = self._torch.tensor(
-            [[st.output_token_ids[-1]] for st in states],
-            device=self._loaded.model.device,
-            dtype=self._torch.long,
+        next_tokens = self._backend.decode(
+            [st.cache for st in states], [st.output_token_ids[-1] for st in states]
         )
-        position_ids = self._torch.tensor(
-            [[n] for n in old_lengths],
-            device=self._loaded.model.device,
-            dtype=self._torch.long,
-        )
-        max_old = max(old_lengths) if old_lengths else 0
-        attention_mask = self._torch.zeros(
-            (batch, max_old + 1),
-            device=self._loaded.model.device,
-            dtype=self._torch.long,
-        )
-        for row, n in enumerate(old_lengths):
-            attention_mask[row, max_old - n :] = 1
-
-        batched_cache = BatchedPagedTinyinferCache(self._paged, cache_states)
-        with self._torch.inference_mode():
-            outputs = self._loaded.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=batched_cache,
-                use_cache=True,
-                return_dict=True,
-            )
-        next_tokens = _select_next_tokens(outputs.logits, batch)
-        for rid, token in zip(running_ids, next_tokens, strict=True):
-            self._states[rid].output_token_ids.append(token)
+        for st, token in zip(states, next_tokens, strict=True):
+            st.output_token_ids.append(token)
 
     def _release_state(self, req_id: str) -> None:
-        """Release any allocated cache blocks for *req_id* and drop state."""
+        """Release any reserved KV storage for *req_id* and drop state."""
         st = self._states.pop(req_id, None)
         if st is not None:
-            self._paged.release_request(st.cache)
+            self._backend.release(st.cache)
         self._requests.pop(req_id, None)
 
     def _is_done(self, req_id: str) -> bool:
@@ -312,13 +276,13 @@ class BatchEngine:
         tokens = self._states[req_id].output_token_ids
         if not tokens:
             return False
-        return tokens[-1] == self._loaded.eos_token_id or len(tokens) >= req.max_new_tokens
+        return tokens[-1] == self._backend.eos_token_id or len(tokens) >= req.max_new_tokens
 
     def _build_result(self, req_id: str) -> GenerationResult:
         st = self._states[req_id]
         tokens = st.output_token_ids
-        stop_reason: StopReason = "eos" if tokens[-1] == self._loaded.eos_token_id else "length"
-        text = self._loaded.tokenizer.decode(tokens, skip_special_tokens=True)
+        stop_reason: StopReason = "eos" if tokens[-1] == self._backend.eos_token_id else "length"
+        text = self._backend.decode_text(tokens)
         return GenerationResult(
             request_id=req_id,
             prompt_token_ids=st.prompt_token_ids,
