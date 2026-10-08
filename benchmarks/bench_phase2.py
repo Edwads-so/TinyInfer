@@ -19,13 +19,16 @@ from dataclasses import dataclass
 from functools import partial
 from math import ceil
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tinyinfer.cache.paged import PagedKVCache
 from tinyinfer.config import EngineConfig
+from tinyinfer.model.paged import PagedKVPool
+from tinyinfer.model.qwen2 import Qwen2Model
+from tinyinfer.model.weights import resolve_model_dir
 from tinyinfer.profiling.phase2 import (
     PHASE2_MODES,
     PHASE2_SCHEMA_VERSION,
@@ -39,10 +42,13 @@ from tinyinfer.profiling.phase2 import (
     load_phase2_workloads,
 )
 from tinyinfer.runtime.generation import generate_greedy, reference_generate
-from tinyinfer.runtime.hf_loader import load_reference_model
+from tinyinfer.runtime.hf_loader import MODEL_ID, MODEL_REVISION, load_reference_model
 from tinyinfer.runtime.request import GenerationRequest
 from tinyinfer.runtime.result import GenerationResult
+from tinyinfer.scheduler.backends import OwnedPagedBackend
 from tinyinfer.scheduler.engine import BatchEngine
+
+R = TypeVar("R")
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +196,42 @@ def check_pool_capacity(
         )
 
 
+class PoolStats(Protocol):
+    """The block-pool facts a benchmark record carries."""
+
+    @property
+    def block_size(self) -> int: ...
+
+    @property
+    def num_physical_blocks(self) -> int: ...
+
+    @property
+    def free_block_count(self) -> int: ...
+
+
+class OwnedPoolStats:
+    """``PoolStats`` for ``PagedKVPool``, counting only allocatable blocks.
+
+    The reserved null block is never handed out, so a fully recovered pool has
+    ``free_block_count == num_physical_blocks`` here, as with the HF paged cache.
+    """
+
+    def __init__(self, pool: PagedKVPool) -> None:
+        self._pool = pool
+
+    @property
+    def block_size(self) -> int:
+        return self._pool.block_size
+
+    @property
+    def num_physical_blocks(self) -> int:
+        return self._pool.num_blocks - 1
+
+    @property
+    def free_block_count(self) -> int:
+        return self._pool.free_block_count
+
+
 @dataclass(frozen=True, slots=True)
 class WorkloadExecution:
     """Results and lifecycle timestamps from one workload run.
@@ -199,7 +241,23 @@ class WorkloadExecution:
 
     results: tuple[GenerationResult, ...]
     timings: RequestLifecycleTimings
-    paged: PagedKVCache | None
+    paged: PoolStats | None
+
+
+def create_owned_pool(
+    model: Qwen2Model, config: EngineConfig, *, pool_tokens: int | None = None
+) -> PagedKVPool:
+    """Size a slot-addressed pool like ``create_shared_paged_cache``, plus its null block."""
+    tokens = config.max_sequence_length if pool_tokens is None else pool_tokens
+    if tokens < 1:
+        raise ValueError("pool_tokens must be positive")
+    return PagedKVPool.for_spec(
+        model.spec,
+        block_size=config.kv_block_size,
+        num_blocks=_blocks_for(tokens, config.kv_block_size) + 1,
+        device=model.device,
+        dtype=model.dtype,
+    )
 
 
 def run_shared_paged_workload(
@@ -211,12 +269,45 @@ def run_shared_paged_workload(
     clock: Callable[[], int] = time.perf_counter_ns,
     pool_tokens: int | None = None,
 ) -> WorkloadExecution:
-    """Execute a workload with one shared pool and verify all blocks return."""
-    schedule = submission_schedule(workload, mode=mode)
+    """Execute a workload on the HF paged path with one shared pool; verify all blocks return."""
     timings = RequestLifecycleTimings(clock=clock)
     paged = create_shared_paged_cache(loaded, config, pool_tokens=pool_tokens)
-    max_batch = 1 if mode == "sequential" else len(workload.requests)
-    engine = BatchEngine(loaded, paged, max_batch=max_batch, observer=timings)
+    engine = BatchEngine(loaded, paged, max_batch=_max_batch(workload, mode), observer=timings)
+    return _run_engine_workload(engine, paged, workload, mode, timings)
+
+
+def run_owned_paged_workload(
+    model: Qwen2Model,
+    loaded: Any,
+    config: EngineConfig,
+    workload: Phase2Workload,
+    *,
+    mode: Phase2Mode,
+    clock: Callable[[], int] = time.perf_counter_ns,
+    pool_tokens: int | None = None,
+) -> WorkloadExecution:
+    """Execute a workload on the owned forward pass and slot-addressed pool."""
+    timings = RequestLifecycleTimings(clock=clock)
+    pool = create_owned_pool(model, config, pool_tokens=pool_tokens)
+    backend = OwnedPagedBackend(model, loaded.tokenizer, pool, eos_token_id=loaded.eos_token_id)
+    engine = BatchEngine.from_backend(
+        backend, max_batch=_max_batch(workload, mode), observer=timings
+    )
+    return _run_engine_workload(engine, OwnedPoolStats(pool), workload, mode, timings)
+
+
+def _max_batch(workload: Phase2Workload, mode: Phase2Mode) -> int:
+    return 1 if mode == "sequential" else len(workload.requests)
+
+
+def _run_engine_workload(
+    engine: BatchEngine,
+    pool: PoolStats,
+    workload: Phase2Workload,
+    mode: Phase2Mode,
+    timings: RequestLifecycleTimings,
+) -> WorkloadExecution:
+    schedule = submission_schedule(workload, mode=mode)
     pending_index = 0
     iteration = 0
     while pending_index < len(schedule) or not engine.queue.all_done():
@@ -235,9 +326,30 @@ def run_shared_paged_workload(
         expected_ids
     ):
         raise RuntimeError("workload did not produce exactly one result per request")
-    if paged.free_block_count != paged.num_physical_blocks:
+    if pool.free_block_count != pool.num_physical_blocks:
         raise RuntimeError("shared paged pool did not fully recover")
-    return WorkloadExecution(results=results, timings=timings, paged=paged)
+    return WorkloadExecution(results=results, timings=timings, paged=pool)
+
+
+def measure_repetitions(
+    run: Callable[[], WorkloadExecution],
+    repetitions: int,
+    *,
+    before_run: Callable[[], object],
+    after_run: Callable[[int, WorkloadExecution], R],
+) -> list[R]:
+    """Run ``repetitions`` measured runs, dropping each execution before the next starts.
+
+    Holding the previous execution while the next one allocates its KV pool would
+    let peak-memory statistics count two pools at once.
+    """
+    measured: list[R] = []
+    for repetition in range(repetitions):
+        before_run()
+        execution = run()
+        measured.append(after_run(repetition, execution))
+        del execution
+    return measured
 
 
 def run_hf_sequential_workload(
@@ -589,6 +701,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="shared KV pool capacity in tokens (default: config max_sequence_length)",
     )
+    parser.add_argument(
+        "--backend",
+        choices=("hf", "owned"),
+        default="hf",
+        help="engine-mode model: Hugging Face + dense-gather adapter (G2-P1 baseline) or the "
+        "owned forward pass on the slot-addressed pool; hf_sequential is always Hugging Face",
+    )
     parser.add_argument("--warmup-runs", type=int, default=3)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--overwrite", action="store_true")
@@ -613,6 +732,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise RuntimeError("G2-P1 benchmark requires an available CUDA device")
     workloads = load_phase2_workloads(args.workloads)
     loaded = load_reference_model(config)
+    owned = (
+        Qwen2Model.from_pretrained(
+            resolve_model_dir(MODEL_ID, MODEL_REVISION),
+            device=loaded.model.device,
+            dtype=torch.bfloat16,
+        )
+        if args.backend == "owned"
+        else None
+    )
     command = tuple([sys.executable, *sys.argv[1:]])
     records: list[Phase2Record] = []
     pool_tokens = config.max_sequence_length if args.kv_pool_tokens is None else args.kv_pool_tokens
@@ -638,14 +766,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     def run(workload: Phase2Workload, mode: Phase2Mode) -> WorkloadExecution:
         if mode == "hf_sequential":
             return run_hf_sequential_workload(loaded, workload)
+        if owned is not None:
+            return run_owned_paged_workload(
+                owned, loaded, config, workload, mode=mode, pool_tokens=pool_tokens
+            )
         return run_shared_paged_workload(
             loaded, config, workload, mode=mode, pool_tokens=pool_tokens
         )
 
+    def reset_peak() -> None:
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+
     total_groups = sum(len(modes) for _, modes in plan)
     finished_groups = 0
     print(
-        f"G2-P1 BENCHMARK: {total_groups} workload/mode groups, "
+        f"G2-P1 BENCHMARK ({args.backend} backend): {total_groups} workload/mode groups, "
         f"{args.warmup_runs} warm-up + {args.repetitions} measured runs each",
         flush=True,
     )
@@ -670,33 +806,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             for _ in range(args.warmup_runs):
                 check(run(workload, mode).results)
-            for repetition in range(args.repetitions):
-                torch.cuda.synchronize()
-                torch.cuda.reset_peak_memory_stats()
-                execution = run(workload, mode)
+
+            def record(
+                repetition: int,
+                execution: WorkloadExecution,
+                workload: Phase2Workload = workload,
+                mode: Phase2Mode = mode,
+                check: Callable[..., dict[str, RequestAlignment]] = check,
+            ) -> Phase2Record:
                 torch.cuda.synchronize()
                 # Read memory before any tie-check forward can raise the peak.
                 peak_allocated = int(torch.cuda.max_memory_allocated())
                 peak_reserved = int(torch.cuda.max_memory_reserved())
-                alignments = check(execution.results)
-                records.append(
-                    build_phase2_record(
-                        loaded=loaded,
-                        workload_id=workload.workload_id,
-                        mode=mode,
-                        repetition=repetition,
-                        warmup_runs=args.warmup_runs,
-                        command=command,
-                        execution=execution,
-                        alignments=alignments,
-                        git_revision=_git_revision(),
-                        transformers_version=importlib.metadata.version("transformers"),
-                        torch_version=torch.__version__,
-                        device_name=torch.cuda.get_device_name(),
-                        peak_allocated_bytes=peak_allocated,
-                        peak_reserved_bytes=peak_reserved,
-                    )
+                return build_phase2_record(
+                    loaded=loaded,
+                    workload_id=workload.workload_id,
+                    mode=mode,
+                    repetition=repetition,
+                    warmup_runs=args.warmup_runs,
+                    command=command,
+                    execution=execution,
+                    alignments=check(execution.results),
+                    git_revision=_git_revision(),
+                    transformers_version=importlib.metadata.version("transformers"),
+                    torch_version=torch.__version__,
+                    device_name=torch.cuda.get_device_name(),
+                    peak_allocated_bytes=peak_allocated,
+                    peak_reserved_bytes=peak_reserved,
                 )
+
+            records.extend(
+                measure_repetitions(
+                    partial(run, workload, mode),
+                    args.repetitions,
+                    before_run=reset_peak,
+                    after_run=record,
+                )
+            )
             finished_groups += 1
             group = records[-args.repetitions :]
             tokens_per_s = sorted(record.generated_tokens_per_s for record in group)
